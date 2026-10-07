@@ -1,0 +1,19 @@
+# Dossiers locaux, non publiés
+/FilesDSK
+/RomsApple
+/host/build
+
+# Fichiers compilés
+*.bin
+*.elf
+*.o
+*.obj
+*.a
+*.pyc
+__pycache__
+.pio/
+dependencies.lock
+
+# IDE et système
+.DS_Store
+.vscode/settings.json
