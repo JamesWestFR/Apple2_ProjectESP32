@@ -278,8 +278,6 @@ Choix d'émulation à connaître :
 | `Apple2_ProjectESP32/` | Le firmware (projet PlatformIO / ESP-IDF 4.4.5, carte `pico32`) |
 | `host/` | Banc de test sur PC du cœur d'émulation |
 | `scripts/` | `rom2header.py` (ROM vers `roms_apple2.h`), `read_serial.py` (journal série), `a2console.py` (console série) |
-| `RomsApple/` | ROM Apple : celles du //e et du //e Enhanced, et trois ROM reprises du dossier `resource/` d'AppleWin (Apple ][, ][+, carte Disk II). Dossier local, non publié |
-| `FilesDSK/` | Disquettes de test. Dossier local, non publié |
 
 ## Licence et crédits
 
