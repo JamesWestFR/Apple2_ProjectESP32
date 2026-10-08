@@ -333,7 +333,7 @@ uint8_t ioRead(uint16_t addr) {
 void ioWrite(uint16_t addr, uint8_t value) {
     if (addr >= 0xC100) {
         if (iic) { IIc::migWrite(addr, value); return; }
-        if ((addr >> 8) == 0xC4 && Mockingboard::enabled && !iic) Mockingboard::write(addr, value);
+        if ((addr >> 8) == 0xC4 && Mockingboard::enabled) Mockingboard::write(addr, value);
         if (iie && addr == 0xCFFF && (sw & SW_INTC8ROM)) {
             sw &= ~SW_INTC8ROM;
             pageSlots();
@@ -494,7 +494,7 @@ void runFrame() {
 // Sauvegarde d'état
 // ---------------------------------------------------------------------------
 
-static const char stateMagic[4] = { 'A', '2', 'S', '5' };
+static const char stateMagic[4] = { 'A', '2', 'S', '6' };
 
 static void machineState(StateIO& io) {
     cpuState(io);

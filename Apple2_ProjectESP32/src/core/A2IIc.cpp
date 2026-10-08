@@ -359,24 +359,39 @@ bool write(uint8_t reg, uint8_t value) {
 void state(StateIO& io) {
     io.bytes(&s, sizeof(s));
     if (plus) io.bytes(migRam, sizeof(migRam));
-    if (hasExpansion && expRam) {
+    if (hasExpansion) {
         // Extension mémoire : seuls les morceaux de 4 Ko qui ne sont pas vides
-        // sont enregistrés (un volume /RAM peu rempli tient en quelques Ko)
-        const uint32_t chunk = 4096, count = (expMask + 1) / chunk;
+        // sont enregistrés (un volume /RAM peu rempli tient en quelques Ko). Leur
+        // nombre est dans le fichier : une sauvegarde faite avec une extension
+        // d'une autre taille, ou sans extension, se reprend quand même.
+        const uint32_t chunk = 4096;
+        const uint32_t mine = expRam ? (expMask + 1) / chunk : 0;
+        uint16_t count = (uint16_t)(mine > 256 ? 256 : mine);
+        io.value(count);
+        if (count > 256) { io.ok = false; return; }
         uint8_t used[32];
         memset(used, 0, sizeof(used));
         if (io.saving) {
-            for (uint32_t c = 0; c < count && c < 256; c++) {
+            for (uint32_t c = 0; c < count; c++) {
                 const uint8_t* p = expRam + c * chunk;
                 for (uint32_t i = 0; i < chunk; i++)
                     if (p[i]) { used[c >> 3] |= 1 << (c & 7); break; }
             }
         }
         io.bytes(used, sizeof(used));
-        for (uint32_t c = 0; c < count && c < 256; c++) {
-            if (used[c >> 3] & (1 << (c & 7))) io.bytes(expRam + c * chunk, chunk);
-            else if (!io.saving) memset(expRam + c * chunk, 0, chunk);
+        for (uint32_t c = 0; c < count; c++) {
+            bool stored = (used[c >> 3] & (1 << (c & 7))) != 0;
+            if (c < mine) {
+                if (stored) io.bytes(expRam + c * chunk, chunk);
+                else if (!io.saving) memset(expRam + c * chunk, 0, chunk);
+            } else if (stored) {
+                // Morceau au-delà de notre extension : lu puis ignoré
+                uint8_t skip[256];
+                for (uint32_t i = 0; i < chunk; i += sizeof(skip)) io.bytes(skip, sizeof(skip));
+            }
         }
+        if (!io.saving)
+            for (uint32_t c = count; c < mine; c++) memset(expRam + c * chunk, 0, chunk);
     }
     if (!io.saving) {
         migLines();

@@ -134,8 +134,7 @@ les mêmes fichiers du cœur d'émulation (`src/core/`) :
   Mario Bros, Alien Typhoon et Pitfall II se lancent.
 
 Écrit mais **jamais essayé**, ni sur PC ni sur la carte : la double basse
-résolution ; une disquette 3,5 pouces simple face (400 Ko) ; le formatage
-d'une disquette 3,5 pouces ou d'un disque SmartPort.
+résolution ; le formatage d'une disquette 3,5 pouces ou d'un disque SmartPort.
 
 ## Ce qui est émulé
 
@@ -255,7 +254,8 @@ l'anglais.
   La ROM 255 ne connaît pas le SmartPort.
 - **Sur le //c Plus** : une image de 800 Ko montée comme disque dur est la
   disquette du lecteur 3,5 pouces interne, et la machine démarre dessus ; une
-  image plus grande est un disque SmartPort, qu'elle trouve aussi d'elle-même.
+  image d'une autre taille (y compris une disquette simple face de 400 Ko)
+  est un disque SmartPort, qu'elle trouve aussi d'elle-même.
   La disquette 5,25 pouces du lecteur 1 ne démarre que s'il n'y a ni l'une ni
   l'autre. Une disquette que le programme éjecte revient d'elle-même au bout
   de quelques secondes.

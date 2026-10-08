@@ -58,6 +58,9 @@ static uint8_t iwmMode = 0;
 // interne, ou les deux vers des lecteurs 3,5 pouces externes (absents ici)
 static bool plus = false;
 static bool migInternal = false, migExternal35 = false, migSel = false;
+// Bus SmartPort : émission de l'Apple en cours
+static uint32_t busWriteCycles = 0;
+static bool busWriting = false;
 #define NIBBLE_CYCLES 32
 
 // Piste sous la tête
@@ -214,6 +217,7 @@ bool busy() {
 // arrêté, aimants coupés, mode lecture
 void reset() {
     flush();
+    Disk35::reset();
     motorOn = motorStopping = false;
     phases = 0;
     q6 = q7 = false;
@@ -480,12 +484,19 @@ void state(StateIO& io) {
     io.value(q6); io.value(q7); io.value(latch); io.value(nibbleCycles);
     int pos = trackPos;
     io.value(pos);
+    // Lecteur WOZ : position de la tête et état du séquenceur, pour qu'une
+    // reprise en plein chargement retrouve le disque au même angle
+    io.value(wozPos); io.value(wozCycles); io.value(wozPhase); io.value(wozBit); io.value(wozPulsed);
+    io.value(wozWindow); io.value(wozRandom); io.value(lssAddress); io.value(lssData); io.value(iwmMode);
     if (!io.saving) {
         // La piste sera reconvertie à la prochaine lecture, à la même position
         trackDrive = trackNum = -1;
         trackLen = 0;
         trackDirty = false;
         restorePos = pos;
+        // Sans longueur de piste connue, loadWozTrack garde la position telle quelle
+        wozBits = 0;
+        busWriting = false;
     }
 }
 
@@ -636,8 +647,6 @@ static uint8_t access35(int dev, uint8_t reg, bool isWrite, uint8_t value) {
 // SmartPort. Les lecteurs 5,25 pouces s'effacent et l'IWM échange des paquets
 // avec les périphériques du bus (A2SmartPort.cpp). Sans périphérique, la ligne
 // d'état reste haute et le paquet du firmware reste sans accusé de réception.
-static uint32_t busWriteCycles = 0;
-static bool busWriting = false;
 #define BUS_UNDERRUN_CYCLES 64      // deux durées d'octet sans rien à émettre
 
 static uint8_t accessBus(uint8_t reg, bool isWrite, uint8_t value) {
@@ -753,7 +762,11 @@ uint8_t access(uint8_t reg, bool isWrite, uint8_t value) {
             if (++trackPos >= trackLen) trackPos = 0;
             break;
         case 0xD:
-            if (drives[cur].fmt == FMT_WOZ && spinning()) wozRead();
+            if (drives[cur].fmt == FMT_WOZ && spinning()) {
+                // La tête a pu changer de piste ou de lecteur depuis la dernière lecture
+                ensureTrack();
+                wozRead();
+            }
             q6 = true;
             if (isWrite) latch = value;
             wozSwitches();

@@ -44,7 +44,9 @@ void setPlus(bool on);
 namespace Disk35 {
 void init();
 void setPresent(bool on);
+bool isMedia(uint32_t blocks);    // l'image est une disquette de ce lecteur
 void mediaChanged();
+void reset();
 bool busy();
 void setSide(bool side);
 bool sense(uint8_t reg);

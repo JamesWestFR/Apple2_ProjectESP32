@@ -69,12 +69,12 @@ void setEnabled(bool on) {
     rxLen = txLen = 0;
 }
 
-// //c Plus : une image de 800 ou 400 Ko va dans le lecteur interne
+// //c Plus : une image de 800 Ko va dans le lecteur interne
 void setInternal35(bool on) { mediaElsewhere = on; }
 
 static inline uint32_t blocks() {
     uint32_t n = Hdd::blockCount();
-    return (mediaElsewhere && (n == 1600 || n == 800)) ? 0 : n;
+    return (mediaElsewhere && Disk35::isMedia(n)) ? 0 : n;
 }
 
 static inline bool present() { return enabled && blocks() != 0; }
@@ -130,22 +130,34 @@ static void reply(uint8_t type, uint8_t error, const uint8_t* data, int len) {
     txPos = 0;
 }
 
-// Données du paquet reçu (packet[0] est $C3). Rend leur nombre, -1 si le paquet est tronqué.
+// Données du paquet reçu (packet[0] est $C3 ; write() a vérifié sa longueur :
+// 6 octets isolés et 73 groupes au plus). Rend leur nombre, même au-delà de
+// `maxLen` (seuls les premiers sont alors gardés), ou -1 si la somme de
+// contrôle est fausse.
 static int payload(uint8_t* out, int maxLen) {
     int odd = packet[6] & 0x7F, groups = packet[7] & 0x7F;
     int n = 0, pos = 8;
+    uint8_t sum = 0;
+    for (int i = 1; i <= 7; i++) sum ^= packet[i];
     if (odd) {
-        if (pos + 1 + odd > rxLen) return -1;
         uint8_t top = packet[pos++];
-        for (int i = 0; i < odd && n < maxLen; i++) out[n++] = (uint8_t)((packet[pos++] & 0x7F) | (((top >> (6 - i)) & 1) << 7));
+        for (int i = 0; i < odd; i++, n++) {
+            uint8_t v = (uint8_t)((packet[pos++] & 0x7F) | (((top >> (6 - i)) & 1) << 7));
+            sum ^= v;
+            if (n < maxLen) out[n] = v;
+        }
     }
     for (int g = 0; g < groups; g++) {
-        if (pos + 8 > rxLen) return -1;
         uint8_t top = packet[pos++];
-        for (int i = 0; i < 7; i++, pos++)
-            if (n < maxLen) out[n++] = (uint8_t)((packet[pos] & 0x7F) | (((top >> (6 - i)) & 1) << 7));
+        for (int i = 0; i < 7; i++, n++) {
+            uint8_t v = (uint8_t)((packet[pos++] & 0x7F) | (((top >> (6 - i)) & 1) << 7));
+            sum ^= v;
+            if (n < maxLen) out[n] = v;
+        }
     }
-    return n;
+    // La somme voyage sur deux octets : ses bits pairs, puis ses bits impairs
+    uint8_t sent = (uint8_t)((packet[pos] & 0x55) | ((packet[pos + 1] & 0x55) << 1));
+    return sent == sum ? n : -1;
 }
 
 // Réponse à la commande d'état : état général (code 0) ou bloc d'identification (code 3)
@@ -174,10 +186,12 @@ static void received() {
     uint8_t dest = packet[1], type = packet[3];
     uint8_t d[512];
     int n = payload(d, sizeof(d));
+    // Paquet abîmé : pas d'accusé de réception, l'Apple le renverra
+    if (n < 0) return;
 
     if (type == TYPE_DATA) {
         // Suite d'une écriture de bloc ou d'une commande de contrôle
-        if (packet[1] != s.id || s.pendingCommand == 0xFF) return;
+        if (dest != s.id || s.pendingCommand == 0xFF) return;
         uint8_t error = ERR_NONE;
         if (s.pendingCommand == CMD_WRITE_BLOCK) {
             if (n != 512) error = ERR_IO;
@@ -220,7 +234,7 @@ static void received() {
         case CMD_CONTROL:
             // Le paquet de données suit
             s.pendingCommand = command;
-            s.pendingBlock = block;
+            s.pendingBlock = command == CMD_WRITE_BLOCK ? block : 0;
             txLen = 0;
             break;
         case CMD_FORMAT:
@@ -259,8 +273,9 @@ void write(uint8_t v) {
     // La longueur se déduit de l'en-tête : $C8 peut aussi être une donnée
     if (rxLen < 8) return;
     int odd = packet[6] & 0x7F, groups = packet[7] & 0x7F;
+    // 512 octets font 1 octet isolé et 73 groupes ; un groupe incomplet a 6 octets au plus
+    if (odd > 6 || groups > 73) { rxLen = 0; return; }
     int total = 8 + (odd ? odd + 1 : 0) + groups * 8 + 3;
-    if (total > PACKET_MAX) { rxLen = 0; return; }
     if (rxLen < total) return;
     txLen = 0;
     received();

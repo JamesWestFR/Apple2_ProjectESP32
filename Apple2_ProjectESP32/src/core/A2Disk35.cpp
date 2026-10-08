@@ -21,8 +21,10 @@ l'image, et le disque attend le programme (un octet non lu n'est jamais
 perdu). Ce qui est écrit est décodé au fil de l'eau : chaque champ de données
 complet repart aussitôt dans l'image.
 
-L'image est celle montée comme disque dur (800 Ko, ou 400 Ko pour une
-disquette simple face), dans l'ordre des blocs ProDOS.
+L'image est celle montée comme disque dur, si elle fait 800 Ko (1600 blocs),
+dans l'ordre des blocs ProDOS. Une image d'une autre taille, y compris une
+disquette simple face de 400 Ko, n'est pas une disquette de ce lecteur : elle
+reste un disque SmartPort.
 
 Commandes et états du lecteur repris de MAME (floppy.cpp, flopimg.cpp).
 
@@ -63,6 +65,8 @@ struct State {
     uint32_t ejectCycles;
     bool side;                      // face choisie (ligne SEL)
     int16_t pos;                    // position dans le secteur
+    bool sectorDone;                // le secteur sous la tête vient d'être écrit : la tête est à sa fin
+    bool writeFailed;               // l'image a refusé une écriture : la disquette se dit protégée
     uint32_t nibbleCycles;          // instant du dernier octet lu
     uint32_t writeCycles;           // instant du dernier octet écrit
     bool writing;
@@ -72,6 +76,7 @@ struct State {
 };
 
 static State s;
+void writeEnd();
 static bool present = false;        // la machine a ce lecteur
 
 // Secteur sous la tête, tel que la tête le lit
@@ -89,11 +94,11 @@ static const uint8_t gcr[64] = {
 };
 static uint8_t gcrInv[128];         // octet & 0x7F -> valeur sur 6 bits, 0xFF si invalide
 
-static inline int sides() { return Hdd::blockCount() == 800 ? 1 : 2; }
+// Une image de 800 Ko est une disquette de ce lecteur
+bool isMedia(uint32_t blocks) { return blocks == 1600; }
 
 static bool hasDisk() {
-    uint32_t n = Hdd::blockCount();
-    if (!present || (n != 1600 && n != 800)) return false;
+    if (!present || !isMedia(Hdd::blockCount())) return false;
     if (s.ejected) {
         if ((uint32_t)(cycles - s.ejectCycles) < EJECT_CYCLES) return false;
         s.ejected = false;
@@ -110,7 +115,7 @@ static uint32_t firstBlock(int cyl, int side) {
     uint32_t n = 0;
     for (int zone = 0; zone < cyl / 16; zone++) n += 16 * (12 - zone);
     n += (uint32_t)(cyl % 16) * sectorsOf(cyl);
-    return n * sides() + (side ? sectorsOf(cyl) : 0);
+    return n * 2 + (side ? sectorsOf(cyl) : 0);
 }
 
 void init() {
@@ -130,10 +135,16 @@ void mediaChanged() {
     s.changed = true;
     s.ejected = false;
     s.writing = false;
+    s.writeStage = 0;
+    s.writeFailed = false;
     bufCyl = -1;
 }
 
 bool busy() { return hasDisk() && s.motor; }
+
+// Signal RESET de l'Apple : une écriture en cours est abandonnée
+void reset() { writeEnd(); }
+
 
 // ---------------------------------------------------------------------------
 // Codage et décodage d'un secteur
@@ -206,14 +217,14 @@ static void loadSector() {
     bufSector = s.sector;
     uint8_t data[SECTOR_BYTES];
     memset(data, 0, TAG_SIZE);
-    int side = (s.side && sides() == 2) ? 1 : 0;
+    int side = s.side ? 1 : 0;
     if (!A2_platformHddRead(firstBlock(s.cyl, side) + s.sector, data + TAG_SIZE)) memset(data + TAG_SIZE, 0, 512);
     Hdd::statReads++;
     uint8_t* p = buf;
     memset(p, 0xFF, 14);
     p += 14;
     uint8_t sideByte = (uint8_t)((s.cyl & 0x40 ? 1 : 0) | (side ? 0x20 : 0));
-    uint8_t format = sides() == 2 ? 0x22 : 0x02;
+    const uint8_t format = 0x22;    // double face, entrelacement de 2
     *p++ = 0xD5; *p++ = 0xAA; *p++ = 0x96;
     *p++ = gcr[s.cyl & 0x3F];
     *p++ = gcr[s.sector];
@@ -233,6 +244,7 @@ static void loadSector() {
 static inline void nextSector() {
     s.sector = (uint8_t)((s.sector + 1) % sectorsOf(s.cyl));
     s.pos = 0;
+    s.sectorDone = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +263,7 @@ bool sense(uint8_t reg) {
         case 0x6: return true;                      // lecteur double face
         case 0x7: return false;                     // un lecteur est là
         case 0x8: return !hasDisk();                // pas de disquette
-        case 0x9: return !Hdd::writeProtected();    // disquette non protégée
+        case 0x9: return !(Hdd::writeProtected() || s.writeFailed);   // disquette non protégée
         case 0xA: return s.cyl != 0;                // hors de la piste 0
         case 0xB: return ((cycles >> 9) & 1) != 0;  // tachymètre
         case 0xE: return !(s.motor && hasDisk());   // lecteur pas prêt
@@ -270,6 +282,7 @@ void command(uint8_t reg) {
             else if (s.cyl < 79) s.cyl++;
             s.sector = (uint8_t)(s.sector % sectorsOf(s.cyl));
             s.pos = 0;
+            s.sectorDone = false;
             break;
         case 0x2: s.motor = true; break;
         case 0x6: s.motor = false; break;
@@ -283,9 +296,13 @@ uint8_t readData() {
     if (!hasDisk() || !s.motor) return 0;
     if ((uint32_t)(cycles - s.nibbleCycles) < NIBBLE_CYCLES) return 0;
     s.nibbleCycles = cycles;
-    if (bufLen && s.pos >= bufLen) nextSector();
-    if (bufCyl != s.cyl || bufSide != (int)s.side || bufSector != s.sector) loadSector();
     Hdd::activity = 30;
+    if (s.sectorDone) nextSector();
+    if (bufCyl != s.cyl || bufSide != (int)s.side || bufSector != s.sector) loadSector();
+    if (s.pos < 0 || s.pos >= bufLen) {
+        nextSector();
+        loadSector();
+    }
     return buf[s.pos++];
 }
 
@@ -294,7 +311,7 @@ uint8_t readData() {
 void writeData(uint8_t v) {
     s.writing = true;
     s.writeCycles = cycles;
-    if (!hasDisk() || !s.motor || Hdd::writeProtected()) return;
+    if (!hasDisk() || !s.motor || Hdd::writeProtected() || s.writeFailed) return;
     Hdd::activity = 30;
     static const uint8_t mark[3] = { 0xD5, 0xAA, 0xAD };
     if (s.writeStage < 3) {
@@ -309,12 +326,14 @@ void writeData(uint8_t v) {
     uint8_t data[SECTOR_BYTES];
     int sector = gcrInv[field[0] & 0x7F];
     if (sector < sectorsOf(s.cyl) && decodeData(field + 1, data)) {
-        int side = (s.side && sides() == 2) ? 1 : 0;
-        A2_platformHddWrite(firstBlock(s.cyl, side) + sector, data + TAG_SIZE);
-        Hdd::statWrites++;
+        // L'image n'a pas pris le bloc (carte SD, fichier en lecture seule) : le
+        // lecteur ne peut pas le dire au programme, mais la disquette se déclare
+        // protégée pour que la suite échoue au lieu de sembler réussir
+        if (A2_platformHddWrite(firstBlock(s.cyl, s.side ? 1 : 0) + sector, data + TAG_SIZE)) Hdd::statWrites++;
+        else s.writeFailed = true;
         // La tête est maintenant à la fin de ce secteur
         s.sector = (uint8_t)sector;
-        s.pos = 0x7FFF;
+        s.sectorDone = true;
         bufCyl = -1;
     }
 }
@@ -334,9 +353,14 @@ uint8_t handshake() {
 void state(StateIO& io) {
     io.bytes(&s, sizeof(s));
     if (!io.saving) {
+        // Un fichier abîmé ne doit pas sortir la tête de la disquette
+        if (s.cyl > 79) s.cyl = 79;
+        s.sector = (uint8_t)(s.sector % sectorsOf(s.cyl));
+        if (s.pos < 0 || s.pos > (int)sizeof(buf)) s.pos = 0;
         bufCyl = -1;
         s.writing = false;
         s.writeStage = 0;
+        s.writeCount = 0;
     }
 }
 
