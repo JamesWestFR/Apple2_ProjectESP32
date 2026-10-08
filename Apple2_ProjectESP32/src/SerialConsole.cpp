@@ -14,7 +14,7 @@ scripts/a2console.py. Une commande par ligne :
   e1 / e2      éjecte ; eh : retire le disque dur (une grande image passée à d1 y est montée)
   b            redémarrage à froid de l'Apple
   r            Ctrl-Reset
-  m N          modèle (0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced, 4 : //c, 5 à 7 : //c ROM 0, 3, 4)
+  m N          modèle (0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced, 4 : //c, 5 à 7 : //c ROM 0, 3, 4, 8 : //c Plus)
   cs 0|1       caractères américains ou français
   x            capture d'écran sur la carte SD
   ls CHEMIN    contenu d'un dossier de la carte SD

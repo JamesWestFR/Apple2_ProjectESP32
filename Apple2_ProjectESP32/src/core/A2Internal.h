@@ -32,7 +32,41 @@ namespace Hdd {
 const uint8_t* romPage();  // firmware de la carte en $C700, nul sans disque
 }
 
-namespace Disk { void state(StateIO& io); }
+namespace Disk {
+void state(StateIO& io);
+// //c Plus : lignes du circuit MIG (lecteur interne sur le lecteur 2, lecteurs
+// 3,5 pouces externes choisis, ligne SEL)
+void setMig(bool internalDrive, bool external35, bool sel);
+void setPlus(bool on);
+}
+
+// Lecteur 3,5 pouces interne du //c Plus
+namespace Disk35 {
+void init();
+void setPresent(bool on);
+void mediaChanged();
+bool busy();
+void setSide(bool side);
+bool sense(uint8_t reg);
+void command(uint8_t reg);
+uint8_t readData();
+void writeData(uint8_t v);
+void writeEnd();
+uint8_t handshake();
+void state(StateIO& io);
+}
+
+// Disque SmartPort sur la prise du lecteur externe du //c
+namespace SmartPort {
+void setEnabled(bool on);
+void setInternal35(bool on);
+void busReset();
+bool ack();
+void phases(uint8_t p);
+void write(uint8_t v);
+uint8_t read();
+void state(StateIO& io);
+}
 
 // Souris, interruption de retour vertical et ports série du //c
 namespace IIc {
@@ -44,7 +78,10 @@ void vbl();
 void mouseMove(int dx, int dy);
 void mouseButton(bool down);
 bool romBank();                             // moitié haute de la ROM de 32 Ko en service
-void setRomVersion(bool banked, bool expansion);
+void setRomVersion(bool banked, bool expansion, bool plus);
+int migRead(uint16_t addr);                 // //c Plus, $CC00 et $CE00 : -1 si la ROM répond
+bool migWrite(uint16_t addr, uint8_t value);
+bool migVisible();                          // le circuit MIG occupe $CC00 et $CE00
 void state(StateIO& io);
 }
 namespace Mouse {

@@ -1,6 +1,6 @@
 # Apple2_ProjectESP32 — émulateur Apple II pour ESP32
 
-Émulateur Apple ][, ][+, //e, //e Enhanced et //c pour la carte **LILYGO TTGO VGA32**
+Émulateur Apple ][, ][+, //e, //e Enhanced, //c et //c Plus pour la carte **LILYGO TTGO VGA32**
 (ESP32-PICO, sortie VGA, clavier PS/2, carte SD). Il reprend l'infrastructure de
 [CPC_ProjectESP32](https://github.com/JamesWestFR/CPC_ProjectESP32) et un cœur
 d'émulation Apple II écrit pour ce projet, avec
@@ -62,7 +62,13 @@ Vérifié sur la carte, par le port série :
   qui crée son réseau et annonce `http://192.168.4.1` ; un reset revient à
   l'émulateur. La page web elle-même n'a pas été ouverte ;
 - `8-bit Games.hdv` (32 Mo), envoyé par le port série : lanceur FastBoot puis
-  Choplifter.
+  Choplifter ;
+- Apple //c Plus : ProDOS 2.4.3 démarre de l'image de 800 Ko du lecteur
+  3,5 pouces interne ; `SAVE`, `DELETE`, `SAVE` puis `CAT` depuis le BASIC
+  (17 blocs écrits sur la carte SD) ; Apple II DeskTop 1.5 s'ouvre sur son
+  bureau, avec le volume de l'extension mémoire ;
+- disque SmartPort : `8-bit Games.hdv` démarre jusqu'à son lanceur sur le
+  //c Plus, et sur les //c ROM 0 et ROM 4 par le `PR#5` automatique.
 
 **À essayer à fond, avec écran, clavier et haut-parleur** : les deux
 dispositions du clavier, la Mockingboard à l'oreille, la manette au clavier,
@@ -101,6 +107,16 @@ les mêmes fichiers du cœur d'émulation (`src/core/`) :
   Flight Simulator II, Frogger II, Karateka (faces A et B, et sa copie
   déplombée), Pitfall II, Platoon, Rambo, Rampage, Renegade, RoboCop (faces A ;
   les faces B ne sont pas des disquettes de démarrage) ;
+- Apple //c Plus, lecteur 3,5 pouces interne : ProDOS 2.4.3 et Apple II
+  DeskTop 1.5 démarrent d'une image de 800 Ko ; `SAVE`, `DELETE` et `CREATE`
+  depuis le BASIC, relus après coup (sur PC, les blocs écrits ont été
+  retrouvés dans l'image) ; ProDOS démarre aussi de la disquette 5,25 pouces,
+  et le lecteur 3,5 pouces passe avant elle quand les deux sont là ;
+- disque SmartPort des //c ROM 0, 3, 4 et Plus : Silvern Castle (1,5 Mo) et
+  `8-bit Games.hdv` (32 Mo) démarrent jusqu'à leur écran d'accueil ; écriture
+  d'un fichier depuis le BASIC en ROM 4 (sur PC) ;
+- sauvegarde d'état pendant un chargement sur le lecteur 3,5 pouces et sur le
+  disque SmartPort : la reprise donne la même image au point près (sur PC) ;
 - Apple //c en ROM 0, 3 et 4 : DOS 3.3, ProDOS ; l'extension mémoire apparaît
   sous ProDOS (`/RAM4`) en ROM 4 ; Karateka et MousePaint en ROM 4 ;
 - Apple //c : bandeau « Apple //c », DOS 3.3 (`SAVE` puis `RUN`), ProDOS,
@@ -114,19 +130,21 @@ les mêmes fichiers du cœur d'émulation (`src/core/`) :
   Mario Bros, Alien Typhoon et Pitfall II se lancent.
 
 Écrit mais **jamais essayé**, ni sur PC ni sur la carte : la double basse
-résolution.
+résolution ; une disquette 3,5 pouces simple face (400 Ko) ; le formatage
+d'une disquette 3,5 pouces ou d'un disque SmartPort.
 
 ## Ce qui est émulé
 
 | | |
 |---|---|
-| Modèles | Apple ][ (Integer BASIC), ][+ (Applesoft, Autostart), //e (6502), //e Enhanced (65C02, MouseText), //c en ROM 255, 0, 3 ou 4 (extension mémoire de 1 Mo en ROM 3 et 4) |
+| Modèles | Apple ][ (Integer BASIC), ][+ (Applesoft, Autostart), //e (6502), //e Enhanced (65C02, MouseText), //c en ROM 255, 0, 3 ou 4 (extension mémoire de 1 Mo en ROM 3 et 4), //c Plus (à 1 MHz : son accélérateur n'est pas émulé) |
 | Caractères | américains, ou français sur //e, //e Enhanced et //c |
 | Mémoire | 64 Ko dont la carte langage ; 128 Ko sur //e (mémoire auxiliaire en PSRAM) |
 | Vidéo | texte 40 et 80 colonnes, basse et haute résolution, doubles résolutions, mode mixte, clignotement ; couleur ou moniteur blanc, vert, ambre |
 | Son | haut-parleur (bascule de `$C030`) ; carte Mockingboard en slot 4 (deux 6522, deux AY-3-8910, six voies) |
 | Disquettes | carte Disk II en slot 6, deux lecteurs 5,25 pouces, en lecture et en écriture : `.dsk`, `.do`, `.po`, `.nib`, `.2mg` de 140 Ko ; `.woz` en lecture seule |
-| Disque dur | carte ProDOS en slot 7 : images par blocs `.hdv`, `.po`, `.2mg`, de 800 Ko à 32 Mo, lues sur la carte SD |
+| Disque dur | images par blocs `.hdv`, `.po`, `.2mg`, de 800 Ko à 32 Mo, lues sur la carte SD : carte ProDOS en slot 7 sur ][, ][+ et //e ; disque SmartPort sur la prise du lecteur externe des //c ROM 0, 3, 4 et Plus |
+| Disquette 3,5 pouces | lecteur interne du //c Plus, en lecture et en écriture : l'image de 800 Ko montée comme disque dur |
 | Entrées | clavier, deux boutons (touches Pomme), manette au clavier ; carte souris AppleMouse II en slot 2, avec une souris PS/2 sur la seconde prise |
 
 Ce qui n'est pas émulé : l'**Apple IIGS** (processeur 65C816 à 2,8 MHz, 1 Mo de
@@ -134,9 +152,11 @@ RAM, vidéo et son propres : hors de portée de cette carte). Les images de
 800 Ko du dossier `FilesDSK/Apple2GS` se montent comme disque dur, mais leurs
 programmes sont faits pour le IIGS et ne tournent pas sur un //e. Ne sont pas
 émulés non plus : sur le //c, la réception sur les ports série et le port 2
-(modem), et, comme sur un vrai, aucune carte (ni disque dur ni Mockingboard) ;
-le lecteur 3,5 pouces du //c (les ROM 0, 3 et 4 démarrent sur le lecteur
-5,25 pouces) et donc le //c Plus ; la cassette ; la carte série, la synthèse
+(modem), et, comme sur un vrai, aucune carte (ni Mockingboard ni carte
+disque dur : son disque dur est un périphérique SmartPort) ; l'accélérateur
+du //c Plus (un 65C02 à 4 MHz est hors de portée de l'ESP32 : la machine
+tourne à 1 MHz, comme un //c Plus dont on a coupé l'accélérateur) et ses
+lecteurs 3,5 pouces externes ; la cassette ; la carte série, la synthèse
 vocale de la Mockingboard ; l'écriture sur une image `.woz`.
 
 ## Utilisation
@@ -214,6 +234,18 @@ l'anglais.
 - **Disquette rapide** : tant que le lecteur tourne, l'émulation va aussi vite
   que l'ESP32 le permet. Le son est alors haché.
 - **Mockingboard** : présence de la carte son dans le slot 4 (oui par défaut).
+- **Disque dur sur le //c** : en ROM 0, 3 et 4, l'image est un disque
+  SmartPort branché à la place du lecteur externe. Un vrai //c ne démarre de
+  lui-même que sur sa disquette : sans disquette dans le lecteur 1,
+  l'émulateur fait donc Ctrl-Reset puis tape `PR#5` à votre place. Avec une
+  disquette, c'est elle qui démarre, et le disque reste accessible (slot 5).
+  La ROM 255 ne connaît pas le SmartPort.
+- **Sur le //c Plus** : une image de 800 Ko montée comme disque dur est la
+  disquette du lecteur 3,5 pouces interne, et la machine démarre dessus ; une
+  image plus grande est un disque SmartPort, qu'elle trouve aussi d'elle-même.
+  La disquette 5,25 pouces du lecteur 1 ne démarre que s'il n'y a ni l'une ni
+  l'autre. Une disquette que le programme éjecte revient d'elle-même au bout
+  de quelques secondes.
 - **Sur le //c** : la souris est intégrée (le réglage « Carte souris » sert
   seulement à mettre en service la souris PS/2 de la seconde prise) ; ce que le
   port 1 imprime (`PR#1`) est ajouté à `PRINTER.TXT`, à la racine de la carte SD.
@@ -319,10 +351,12 @@ app_main (main.cpp)
 | `src/core/Cpu6502.cpp` | 6502 (avec ses instructions non documentées stables) et 65C02, durée comptée par instruction |
 | `src/core/A2Machine.cpp` | Tables de pages, soft switches du ][ et du //e, carte langage, clavier, manettes, haut-parleur, boucle d'une image |
 | `src/core/A2Video.cpp` | Rendu d'une ligne de 560 points dans chaque mode, bus flottant |
-| `src/core/A2Disk.cpp` | Carte Disk II : moteur pas à pas, conversion d'une piste en nibbles et retour, reconnaissance des formats d'image |
+| `src/core/A2Disk.cpp` | Carte Disk II et IWM du //c : moteur pas à pas, conversion d'une piste en nibbles et retour, lecteur WOZ au bit près, reconnaissance des formats d'image, aiguillage vers le lecteur 3,5 pouces et le bus SmartPort |
 | `src/core/A2Hdd.cpp` | Disque dur ProDOS : firmware de la carte (écrit pour ce projet), commandes par blocs |
 | `src/core/A2Mockingboard.cpp` | Mockingboard : 6522 (compteurs, interruptions) et AY-3-8910 |
-| `src/core/A2IIc.cpp` | Ce que le //c a en propre : souris en quadrature, interruption de retour vertical, ports série |
+| `src/core/A2IIc.cpp` | Ce que le //c a en propre : souris en quadrature, interruption de retour vertical, ports série, ROM commutée, extension mémoire ; circuit MIG et registres de l'accélérateur du //c Plus |
+| `src/core/A2Disk35.cpp` | Lecteur 3,5 pouces du //c Plus : registres et commandes du lecteur, secteurs codés à la volée, décodage de ce qui est écrit |
+| `src/core/A2SmartPort.cpp` | Disque SmartPort du //c : paquets échangés avec l'IWM, commandes par blocs |
 | `src/core/A2Mouse.cpp` | Carte souris : PIA 6821 et dialogue avec son microcontrôleur, porté d'AppleWin |
 | `src/WifiApp.cpp` | Second firmware (environnement `wifi`, partition ota_1) : serveur web qui donne accès à la carte SD, repris de CPC_ProjectESP32 |
 | `src/Emu.cpp` | Initialisation, boucle principale, tâche audio |

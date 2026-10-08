@@ -297,8 +297,8 @@ static void itemHelp(int m, int i, const char*& a, const char*& b) {
             } else if (i == MEDIA_DRIVE2) {
                 a = T("Seconde disquette d'un programme.", "Second disk of a program.");
             } else if (i == MEDIA_HDD) {
-                a = T("Images HDV, PO, 2MG de 800 Ko a 32 Mo,", "800K to 32M HDV, PO, 2MG images,");
-                b = T("en slot 7 : l'Apple demarre dessus.", "in slot 7: the Apple boots from it.");
+                a = T("Images HDV, PO, 2MG : slot 7 du //e,", "HDV, PO, 2MG images: //e slot 7,");
+                b = T("SmartPort du //c, 3,5 pouces du //c+.", "//c SmartPort, //c+ 3.5 inch drive.");
             } else if (i == MEDIA_EJECTHDD) {
                 a = T("L'Apple redemarre sur la disquette.", "The Apple boots from the floppy again.");
             } else if (i == MEDIA_SWAP) {
@@ -309,7 +309,7 @@ static void itemHelp(int m, int i, const char*& a, const char*& b) {
         case M_MACHINE:
             if (i == MAC_MODEL || i == MAC_APPLY) {
                 a = T("][ : BASIC entier. ][+ : Applesoft.", "][: Integer BASIC. ][+: Applesoft.");
-                b = T("//e : cartes. //c : ROM 255, 0, 3 ou 4.", "//e: cards. //c: ROM 255, 0, 3 or 4.");
+                b = T("//e : cartes. //c : ROM 255 a 4, Plus.", "//e: cards. //c: ROM 255 to 4, Plus.");
             } else if (i == MAC_KEYB) {
                 a = T("La touche marquee A donne un A.", "The key labelled A types an A.");
             } else if (i == MAC_FASTDISK) {

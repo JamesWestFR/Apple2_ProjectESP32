@@ -8,6 +8,7 @@ Génère Apple2_ProjectESP32/include/roms_apple2.h :
   - gb_rom_apple2e       Apple //e, 16 Ko, $C000-$FFFF
   - gb_rom_apple2e_enh   Apple //e Enhanced, 16 Ko, $C000-$FFFF
   - gb_rom_apple2c       Apple //c (ROM 255), 16 Ko, $C000-$FFFF
+  - gb_rom_apple2c0, c3, c4, cp   Apple //c ROM 0, 3, 4 et //c Plus, 32 Ko en deux moitiés
   - gb_rom_disk2         carte Disk II 16 secteurs (P5), 256 octets, $Cn00
   - gb_rom_mouse         carte souris AppleMouse II, 2 Ko
   - gb_rom_video2e       générateur de caractères du //e, 2 Ko
@@ -40,6 +41,7 @@ ROMS = [
     ("gb_rom_apple2c0", ["apple2c/apple2c0/3420033a.256"], 0x8000, "Apple //c, ROM 0 (UniDisk 3.5)"),
     ("gb_rom_apple2c3", ["apple2c/apple2c3/342-0445-a.256"], 0x8000, "Apple //c, ROM 3 (extension mémoire)"),
     ("gb_rom_apple2c4", ["apple2c/apple2c4/3410445b.256"], 0x8000, "Apple //c, ROM 4"),
+    ("gb_rom_apple2cp", ["apple2c/apple2cp/341-0625-a.256"], 0x8000, "Apple //c Plus (ROM 5)"),
     ("gb_rom_disk2", ["341-0027-a.p5"], 0x100, "Carte Disk II 16 secteurs (PROM P5 341-0027)"),
     ("gb_rom_mouse", ["341-0270-c.4b"], 0x800, "Carte souris AppleMouse II (341-0270-C), 8 pages de 256 octets"),
     ("gb_rom_video2e", ["Apple IIe Video ROM - 342-0133-A - US 1982.bin"], 0x1000,

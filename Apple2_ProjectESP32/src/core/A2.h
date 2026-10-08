@@ -37,6 +37,7 @@ enum Model : uint8_t {
     MODEL_IIC0,       // Apple //c, ROM 0 : firmware du lecteur 3,5 pouces (lecteur non émulé)
     MODEL_IIC3,       // Apple //c, ROM 3 : extension mémoire
     MODEL_IIC4,       // Apple //c, ROM 4 : dernière version
+    MODEL_IICPLUS,    // Apple //c Plus : lecteur 3,5 pouces interne, accélérateur (non émulé)
     MODEL_COUNT
 };
 
@@ -52,6 +53,7 @@ const char* modelName(Model m);
 
 extern uint32_t cycles;        // cycles 6502 écoulés (boucle sur 32 bits : ne comparer que des écarts)
 extern uint32_t frameCount;
+extern uint32_t powerOnCount;     // nombre de mises sous tension (powerOn, setModel)
 extern int scanline;           // ligne en cours, 0 à 261
 
 // --- 6502 / 65C02 ------------------------------------------------------------
@@ -274,6 +276,7 @@ void insert(uint32_t blocks, bool writeProtected);
 void eject();
 bool inserted();
 uint32_t blockCount();
+bool writeProtected();
 void frameTick();
 uint8_t ioRead(uint8_t reg);
 void ioWrite(uint8_t reg, uint8_t value);

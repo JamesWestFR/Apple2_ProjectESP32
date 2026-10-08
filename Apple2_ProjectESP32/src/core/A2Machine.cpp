@@ -26,6 +26,7 @@ uint8_t* rdPage[256];
 uint8_t* wrPage[256];
 uint32_t sw = 0;
 uint32_t frameCount = 0;
+uint32_t powerOnCount = 0;
 int scanline = 0;
 bool renderEnabled = true;
 
@@ -61,7 +62,8 @@ uint8_t* ramAux() { return auxRam; }
 
 const char* modelName(Model m) {
     static const char* names[MODEL_COUNT] = { "Apple ][", "Apple ][+", "Apple //e", "Apple //e Enhanced", "Apple //c",
-                                               "Apple //c ROM 0", "Apple //c ROM 3", "Apple //c ROM 4" };
+                                               "Apple //c ROM 0", "Apple //c ROM 3", "Apple //c ROM 4",
+                                               "Apple //c Plus" };
     return m < MODEL_COUNT ? names[m] : "?";
 }
 
@@ -142,6 +144,9 @@ static void pageAll() {
     pageSlots();
     // //c : $CF00-$CFFF est de la ROM comme le reste, sans le rôle de $CFFF
     if (iic) rdPage[0xCF] = (uint8_t*)rom + 0x0F00;
+    // //c Plus, moitié haute de la ROM : le circuit MIG prend $CC00 et $CE00
+    if (iic && IIc::migVisible())
+        rdPage[0xCC] = wrPage[0xCC] = rdPage[0xCE] = wrPage[0xCE] = nullptr;
 }
 
 // Pages vidéo seules : PAGE2 et HIRES ne déplacent qu'elles
@@ -218,7 +223,10 @@ static inline void speakerToggle() {
 // $C100-$CFFF : ROM des cartes et ROM interne du //e
 static uint8_t slotRead(uint16_t addr) {
     uint8_t page = addr >> 8;
-    if (iic) return rom[addr - 0xC000];
+    if (iic) {
+        int v = IIc::migRead(addr);
+        return v >= 0 ? (uint8_t)v : rom[addr - 0xC000];
+    }
     // Les pages des cartes présentes ($C6, $C7) sont lues directement (pageSlots)
     if (!iie) return (page == 0xC4 && Mockingboard::enabled) ? Mockingboard::read(addr) : videoFloatingBus();
 
@@ -324,6 +332,7 @@ uint8_t ioRead(uint16_t addr) {
 
 void ioWrite(uint16_t addr, uint8_t value) {
     if (addr >= 0xC100) {
+        if (iic) { IIc::migWrite(addr, value); return; }
         if ((addr >> 8) == 0xC4 && Mockingboard::enabled && !iic) Mockingboard::write(addr, value);
         if (iie && addr == 0xCFFF && (sw & SW_INTC8ROM)) {
             sw &= ~SW_INTC8ROM;
@@ -396,6 +405,7 @@ void init(uint8_t* main64k, uint8_t* aux64k) {
     mainRam = main64k;
     auxRam = aux64k;
     Disk::init();
+    Disk35::init();
     Hdd::init();
     setModel(curModel);
 }
@@ -405,8 +415,12 @@ void setModel(Model m) {
     iic = (m >= MODEL_IIC);
     iie = (m == MODEL_IIE || m == MODEL_IIE_ENH || iic);
     cpu.cmos = (m == MODEL_IIE_ENH || iic);
-    IIc::setRomVersion(m >= MODEL_IIC0, m >= MODEL_IIC3);
+    IIc::setRomVersion(m >= MODEL_IIC0, m >= MODEL_IIC3, m == MODEL_IICPLUS);
     Disk::setIwm(iic);
+    Disk::setPlus(m == MODEL_IICPLUS);
+    SmartPort::setEnabled(m >= MODEL_IIC0);
+    SmartPort::setInternal35(m == MODEL_IICPLUS);
+    Disk35::setPresent(m == MODEL_IICPLUS);
     switch (m) {
         case MODEL_II:      rom = gb_rom_apple2; break;
         case MODEL_IIPLUS:  rom = gb_rom_apple2plus; break;
@@ -415,6 +429,7 @@ void setModel(Model m) {
         case MODEL_IIC0:    rom = gb_rom_apple2c0; break;
         case MODEL_IIC3:    rom = gb_rom_apple2c3; break;
         case MODEL_IIC4:    rom = gb_rom_apple2c4; break;
+        case MODEL_IICPLUS: rom = gb_rom_apple2cp; break;
         default:            rom = gb_rom_apple2e_enh; break;
     }
     romBase = rom;
@@ -438,6 +453,7 @@ void reset() {
 
 void powerOn() {
     if (!mainRam) return;
+    powerOnCount++;
     // Motif de la RAM à la mise sous tension : FF FF 00 00
     for (int i = 0; i < 0x10000; i += 4) {
         mainRam[i] = mainRam[i + 1] = 0xFF;
@@ -478,7 +494,7 @@ void runFrame() {
 // Sauvegarde d'état
 // ---------------------------------------------------------------------------
 
-static const char stateMagic[4] = { 'A', '2', 'S', '4' };
+static const char stateMagic[4] = { 'A', '2', 'S', '5' };
 
 static void machineState(StateIO& io) {
     cpuState(io);
@@ -487,6 +503,8 @@ static void machineState(StateIO& io) {
     io.bytes(mainRam, 0x10000);
     if (auxRam) io.bytes(auxRam, 0x10000);
     Disk::state(io);
+    Disk35::state(io);
+    SmartPort::state(io);
     Mockingboard::state(io);
     Mouse::state(io);
     IIc::state(io);
@@ -509,6 +527,8 @@ bool loadState(bool (*read)(void* ctx, void* data, uint32_t len), void* ctx) {
     io.bytes(magic, 4); io.value(m); io.value(aux);
     // Une sauvegarde faite avec ou sans mémoire auxiliaire ne se reprend que de même
     if (!io.ok || memcmp(magic, stateMagic, 4) != 0 || m >= MODEL_COUNT || aux != (auxRam ? 1 : 0)) return false;
+    // Reprendre un état n'est pas une mise sous tension
+    uint32_t powerOns = powerOnCount;
     if (m != curModel) setModel((Model)m);
     machineState(io);
     if (!io.ok) {
@@ -516,6 +536,7 @@ bool loadState(bool (*read)(void* ctx, void* data, uint32_t len), void* ctx) {
         powerOn();
         return false;
     }
+    powerOnCount = powerOns;
     rom = romBase + (iic && IIc::romBank() ? 0x4000 : 0);
     pageAll();
     videoInvalidate();

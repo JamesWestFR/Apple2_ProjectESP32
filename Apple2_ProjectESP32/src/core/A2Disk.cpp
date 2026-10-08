@@ -53,6 +53,10 @@ static uint32_t nibbleCycles = 0;   // instant où le dernier octet lu s'est pr�
 // mode que sa ROM écrit puis relit dans le registre d'état
 static bool iwm = false;
 static uint8_t iwmMode = 0;
+// //c Plus : le circuit MIG aiguille le lecteur 2 vers le lecteur 3,5 pouces
+// interne, ou les deux vers des lecteurs 3,5 pouces externes (absents ici)
+static bool plus = false;
+static bool migInternal = false, migExternal35 = false, migSel = false;
 #define NIBBLE_CYCLES 32
 
 // Piste sous la tête
@@ -178,7 +182,32 @@ void setIwm(bool on) {
     iwmMode = 0;
 }
 
-bool busy() { return spinning() && drives[cur].fmt != FMT_NONE; }
+// Lecteur que l'IWM adresse sur un //c Plus
+enum { DEV_525 = 0, DEV_35_INTERNAL, DEV_35_ABSENT };
+static inline int device() {
+    if (!plus) return DEV_525;
+    if (cur == 1 && migInternal) return DEV_35_INTERNAL;
+    return migExternal35 ? DEV_35_ABSENT : DEV_525;
+}
+
+void setPlus(bool on) {
+    plus = on;
+    migInternal = migExternal35 = migSel = false;
+}
+
+void setMig(bool internalDrive, bool external35, bool sel) {
+    migInternal = internalDrive;
+    migExternal35 = external35;
+    migSel = sel;
+    Disk35::setSide(sel);
+}
+
+bool busy() {
+    if (device() == DEV_35_INTERNAL) return motorOn && Disk35::busy();
+    // Bus SmartPort ouvert, IWM en service : un échange avec le disque externe
+    if (iwm && motorOn && (phases & 0x0A) == 0x0A) return true;
+    return spinning() && drives[cur].fmt != FMT_NONE;
+}
 
 // Le signal RESET de l'Apple remet à zéro le registre de la carte : moteur
 // arrêté, aimants coupés, mode lecture
@@ -513,7 +542,105 @@ static void step(uint8_t reg) {
     d.quarterTrack = (int16_t)q;
 }
 
+// //c Plus, lecteur 3,5 pouces choisi : les phases deviennent le numéro de
+// registre du lecteur et sa ligne de commande, et l'IWM donne ses registres à
+// toutes les adresses selon Q6 et Q7
+static uint8_t access35(int dev, uint8_t reg, bool isWrite, uint8_t value) {
+    bool internal = dev == DEV_35_INTERNAL;
+    switch (reg) {
+        case 0x8:
+            if (q7 && internal) Disk35::writeEnd();
+            motorOn = false;
+            break;
+        case 0x9: motorOn = true; break;
+        case 0xA: case 0xB: break;      // lecteur déjà choisi par l'appelant
+        case 0xC: q6 = false; break;
+        case 0xD: q6 = true; break;
+        case 0xE:
+            if (q7 && internal) Disk35::writeEnd();
+            q7 = false;
+            break;
+        case 0xF: q7 = true; break;
+        default: {
+            uint8_t old = phases;
+            if (reg & 1) phases |= 1 << (reg >> 1);
+            else phases &= ~(1 << (reg >> 1));
+            // Front montant de LSTRB : la commande du registre choisi
+            if (internal && motorOn && (phases & 8) && !(old & 8)) Disk35::command((phases & 7) | (migSel ? 8 : 0));
+            break;
+        }
+    }
+    if (isWrite && (reg & 1) && q6 && q7) {
+        if (!motorOn) iwmMode = value & 0x1F;
+        else if (internal) Disk35::writeData(value);
+    }
+    if (q6 && q7) return 0xFF;
+    if (q7) return internal ? Disk35::handshake() : 0xFF;
+    if (q6) {
+        // Registre d'état : ligne d'état du lecteur (haute sans lecteur), moteur, mode
+        bool sense = !(internal && motorOn) || Disk35::sense((phases & 7) | (migSel ? 8 : 0));
+        return (sense ? 0x80 : 0) | (motorOn ? 0x20 : 0) | iwmMode;
+    }
+    if (!motorOn) return 0xFF;
+    return internal ? Disk35::readData() : 0;
+}
+
+// //c : les phases 1 et 3 ensemble font de la prise du lecteur externe un bus
+// SmartPort. Les lecteurs 5,25 pouces s'effacent et l'IWM échange des paquets
+// avec les périphériques du bus (A2SmartPort.cpp). Sans périphérique, la ligne
+// d'état reste haute et le paquet du firmware reste sans accusé de réception.
+static uint32_t busWriteCycles = 0;
+static bool busWriting = false;
+#define BUS_UNDERRUN_CYCLES 64      // deux durées d'octet sans rien à émettre
+
+static uint8_t accessBus(uint8_t reg, bool isWrite, uint8_t value) {
+    switch (reg) {
+        case 0x8: motorOn = false; break;
+        case 0x9: motorOn = true; break;
+        case 0xA: case 0xB: cur = reg & 1; break;
+        case 0xC: q6 = false; break;
+        case 0xD: q6 = true; break;
+        case 0xE: q7 = false; busWriting = false; break;
+        case 0xF: q7 = true; break;
+        default:
+            if (reg & 1) phases |= 1 << (reg >> 1);
+            else phases &= ~(1 << (reg >> 1));
+            SmartPort::phases(phases);
+            break;
+    }
+    if (isWrite && (reg & 1) && q6 && q7) {
+        if (!motorOn) iwmMode = value & 0x1F;
+        else {
+            busWriting = true;
+            busWriteCycles = cycles;
+            SmartPort::write(value);
+        }
+    }
+    if (q6 && q7) return 0xFF;
+    // Registre de dialogue : prêt pour l'octet suivant ; bit 6 à 0 quand l'émission est finie
+    if (q7) return (busWriting && (uint32_t)(cycles - busWriteCycles) > BUS_UNDERRUN_CYCLES) ? 0xBF : 0xFF;
+    if (q6) return (SmartPort::ack() ? 0x80 : 0) | (motorOn ? 0x20 : 0) | iwmMode;
+    return motorOn ? SmartPort::read() : 0xFF;
+}
+
 uint8_t access(uint8_t reg, bool isWrite, uint8_t value) {
+    if (iwm) {
+        uint8_t p = phases;
+        if (reg < 8) {
+            if (reg & 1) p |= 1 << (reg >> 1);
+            else p &= ~(1 << (reg >> 1));
+        }
+        if (reg < 8 && device() == DEV_525) {
+            if ((p & 0x0F) == 0x05) SmartPort::busReset();
+            if ((p & 0x0A) != 0x0A) SmartPort::phases(0);
+        }
+        if ((p & 0x0A) == 0x0A && device() == DEV_525) return accessBus(reg, isWrite, value);
+    }
+    if (plus) {
+        if (reg == 0xA || reg == 0xB) cur = reg & 1;
+        int dev = device();
+        if (dev != DEV_525) return access35(dev, reg, isWrite, value);
+    }
     switch (reg) {
         case 0x8:
             if (motorOn) {

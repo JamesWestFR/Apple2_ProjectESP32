@@ -284,6 +284,37 @@ static void saveOrLoadState(bool saving) {
     printf("| Apple2_ProjectESP32: state %s %s: %s\n", saving ? "save" : "load", path.c_str(), ok ? "ok" : "FAILED");
 }
 
+// //c ROM 0, 3 et 4 : la machine ne démarre d'elle-même que sur sa disquette.
+// Avec un disque SmartPort et pas de disquette, on fait ce que ferait
+// l'utilisateur : Ctrl-Reset, puis PR#5. (Le //c Plus cherche de lui-même.)
+static int smartPortBoot = 0;       // images écoulées depuis le démarrage, 0 : rien à faire
+static uint32_t smartPortPowerOn = 0;   // dernière mise sous tension vue
+static int smartPortSent = 0;       // touches déjà tapées
+static const char smartPortCommand[] = { 'P', 'R', '#', '5', 13, 0 };
+#define SMARTPORT_RESET_FRAME 90
+#define SMARTPORT_TYPE_FRAME 130
+
+static void smartPortBootTick() {
+    if (smartPortPowerOn != A2::powerOnCount) {
+        // L'Apple vient d'être mis sous tension
+        smartPortPowerOn = A2::powerOnCount;
+        A2::Model m = A2::model();
+        smartPortBoot = (m >= A2::MODEL_IIC0 && m <= A2::MODEL_IIC4 && A2::Hdd::inserted()
+                         && Config::disk[0].empty()) ? 1 : 0;
+        smartPortSent = 0;
+    }
+    if (!smartPortBoot) return;
+    smartPortBoot++;
+    if (smartPortBoot == SMARTPORT_RESET_FRAME) A2::reset();
+    // Une touche à la fois, quand l'Apple a lu la précédente
+    if (smartPortBoot < SMARTPORT_TYPE_FRAME || A2::keyWaiting()) return;
+    char c = smartPortCommand[smartPortSent];
+    if (!c) { smartPortBoot = 0; return; }
+    A2::keyDown((uint8_t)c);
+    A2::keyUp();
+    smartPortSent++;
+}
+
 void loop() {
     // La boucle ne dort jamais (elle attend le retour vertical de l'écran) : la
     // tâche IDLE de ce cœur ne tourne plus, on la retire donc de la
@@ -325,6 +356,7 @@ void loop() {
             int64_t t0 = esp_timer_get_time();
             A2::renderEnabled = true;
             if (forceRedraw) A2::videoInvalidate();
+            smartPortBootTick();
             A2::runFrame();
             A2::renderAudio(audioMix, AUDIO_SAMPLES_PER_FRAME, Config::volume);
             if (audioTaskHandle) xTaskNotifyGive(audioTaskHandle);

@@ -6,7 +6,7 @@ Compile les fichiers de Apple2_ProjectESP32/src/core tels quels, sans ESP32, et
 les pilote par une suite d'actions données sur la ligne de commande, exécutées
 dans l'ordre :
 
-  model=N          0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced, 4 : //c, 5 à 7 : //c ROM 0, 3, 4 (démarrage à froid)
+  model=N          0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced, 4 : //c, 5 à 7 : //c ROM 0, 3, 4, 8 : //c Plus (démarrage à froid)
   charset=N        jeu de caractères du //e et du //c : 0 américain, 1 français
   noaux            //e sans mémoire auxiliaire (à placer avant model=)
   disk1=FICHIER    insère une disquette (.dsk .do .po .nib .2mg) ; disk2= de même
@@ -24,6 +24,7 @@ dans l'ordre :
   savestate=FICHIER, loadstate=FICHIER   sauvegarde et reprise de l'état de la machine
   wav=FICHIER      enregistre le son des images suivantes (fermé en fin de programme)
   save1=FICHIER    écrit l'image de la disquette 1 telle qu'elle est en mémoire
+  savehdd=FICHIER  écrit l'image du disque dur (ou de la disquette 3,5 pouces) telle qu'elle est en mémoire
   state            affiche le 6502 et les soft switches
   mem=ADR,N        affiche N octets de mémoire (hexadécimal)
   bench=N          émule N images et donne la vitesse
@@ -391,6 +392,10 @@ int main(int argc, char** argv) {
             A2::Disk::flush();
             FILE* f = fopen(val.c_str(), "wb");
             if (f) { fwrite(disks[0].data.data(), 1, disks[0].data.size(), f); fclose(f); }
+        }
+        else if (key == "savehdd") {
+            FILE* f = fopen(val.c_str(), "wb");
+            if (f) { fwrite(hddData.data(), 1, hddData.size(), f); fclose(f); }
         }
         else if (key == "bench") {
             int n = atoi(val.c_str());

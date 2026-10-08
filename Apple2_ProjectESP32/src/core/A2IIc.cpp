@@ -1,7 +1,8 @@
 /*
 
 Apple2_ProjectESP32 — Ce que l'Apple //c a en propre : la souris, l'interruption
-de retour vertical et les deux ports série.
+de retour vertical, les deux ports série, la ROM commutée, l'extension mémoire
+et, sur le //c Plus, le circuit MIG et les registres de l'accélérateur.
 
 Souris : pas de carte, la souris est reliée à l'IOU. Chaque axe donne deux
 signaux en quadrature ; un front du premier (X0, Y0) peut lever une
@@ -17,6 +18,15 @@ lecture de $C070 acquitte ; $C019 dit si elle est en attente.
 Ports série : deux ACIA 6551, en $C098 (port 1, l'imprimante) et $C0A8 (port 2,
 le modem). L'émetteur est toujours libre et rien n'est jamais reçu ; ce que le
 port 1 émet est remis à la plateforme, qui l'écrit dans un fichier.
+
+//c Plus, circuit MIG : visible en $CC00 et $CE00 quand la moitié haute de la
+ROM est en service, il donne au lecteur 3,5 pouces les lignes qui manquent à
+l'IWM (lecteur interne, lecteurs 3,5 pouces externes, SEL) et une mémoire de
+2 Ko, vue par une fenêtre de 32 octets, où le firmware range le secteur lu.
+
+//c Plus, accélérateur : un Zip Chip à 4 MHz. Ses registres ($C05A-$C05F une
+fois déverrouillés) sont là pour que le firmware s'initialise, mais le 65C02
+reste à 1 MHz : l'ESP32 n'a pas de quoi en émuler un quatre fois plus rapide.
 
 Comportement repris de MAME (apple2e.cpp).
 
@@ -48,18 +58,123 @@ struct State {
     bool romHigh;
     // Extension mémoire ($C0C0-$C0C3) : adresse sur 24 bits, qui avance à chaque accès à la donnée
     uint32_t expAddress;
+    // Circuit MIG du //c Plus
+    uint16_t migPage;               // position de la fenêtre dans sa mémoire
+    bool internalDrive, external35, sel;
+    // Accélérateur du //c Plus
+    bool zipUnlocked, zipFast;
+    uint8_t zipStage, zipSlots, zipGameIo;
 };
 
 static State s;
-static bool bankedRom = false, hasExpansion = false;
+static bool bankedRom = false, hasExpansion = false, plus = false;
+static uint8_t migRam[0x800];
 static uint8_t* expRam = nullptr;
 static uint32_t expMask = 0;
 
 bool romBank() { return s.romHigh; }
 
-void setRomVersion(bool banked, bool expansion) {
+void setRomVersion(bool banked, bool expansion, bool isPlus) {
     bankedRom = banked;
     hasExpansion = expansion;
+    plus = isPlus;
+    memset(migRam, 0, sizeof(migRam));
+}
+
+bool migVisible() { return plus && s.romHigh; }
+
+static inline void migLines() { Disk::setMig(s.internalDrive, s.external35, s.sel); }
+
+// $C028 : l'autre moitié de la ROM. Le MIG est remis à zéro quand la moitié
+// basse revient.
+static void toggleRomBank() {
+    s.romHigh = !s.romHigh;
+    if (plus && !s.romHigh) {
+        s.migPage = 0;
+        s.internalDrive = s.external35 = false;
+        migLines();
+    }
+    romBankChanged();
+}
+
+int migRead(uint16_t addr) {
+    if (!migVisible()) return -1;
+    uint8_t page = addr >> 8, low = addr & 0xFF;
+    if (page != 0xCC && page != 0xCE) return -1;
+    if (page == 0xCE) {
+        uint16_t a = (uint16_t)(s.migPage + (low & 0x1F));
+        switch (low >> 5) {
+            case 0: return migRam[a];
+            case 1: s.migPage = (s.migPage + 0x20) & 0x7FF; return migRam[a];
+            case 2: s.sel = false; migLines(); break;
+            case 3: s.sel = true; migLines(); break;
+            case 5: s.migPage = 0; break;
+            default: break;
+        }
+    }
+    return videoFloatingBus();
+}
+
+bool migWrite(uint16_t addr, uint8_t value) {
+    if (!migVisible()) return false;
+    uint8_t page = addr >> 8, low = addr & 0xFF;
+    if (page == 0xCC) {
+        // $CC40 remet l'IWM à zéro ; rien à faire ici
+        if ((low >> 5) == 4) s.internalDrive = true;
+        else if ((low >> 5) == 6) s.internalDrive = false;
+        migLines();
+        return true;
+    }
+    if (page != 0xCE) return false;
+    uint16_t a = (uint16_t)(s.migPage + (low & 0x1F));
+    switch (low >> 5) {
+        case 0: migRam[a] = value; break;
+        case 1: migRam[a] = value; s.migPage = (s.migPage + 0x20) & 0x7FF; break;
+        case 2: s.external35 = true; migLines(); break;     // $CE40 : lecteurs 3,5 pouces externes
+        case 3: s.external35 = false; migLines(); break;    // $CE60 : lecteurs 5,25 pouces
+        case 5: s.migPage = 0; break;
+        default: break;
+    }
+    return true;
+}
+
+// Accélérateur, en lecture : une fois déverrouillé, ses registres remplacent
+// les bascules de $C058-$C05F
+static int zipRead(uint8_t reg) {
+    if (!plus || !s.zipUnlocked) return -1;
+    switch (reg) {
+        case 0x58: return 0xC0;
+        case 0x59: return 0x20;
+        case 0x5A: case 0x5D: case 0x5F: return 0x00;
+        // Cache de 64 Ko, accélérateur arrêté ou non, horloge divisée par 1024
+        case 0x5B: return 0x03 | (s.zipFast ? 0 : 0x10) | ((s.zipGameIo & 0x80) ? 0x20 : 0) | (((cycles >> 9) & 1) ? 0x80 : 0);
+        case 0x5C: return s.zipSlots;
+        case 0x5E: return ((sw & SW_ALTZP) ? 0x80 : 0) | ((sw & SW_RAMRD) ? 0x40 : 0) | ((sw & SW_RAMWRT) ? 0x20 : 0)
+                        | ((sw & SW_80STORE) ? 0x10 : 0) | ((sw & SW_HIRES) ? 0x08 : 0) | ((sw & SW_PAGE2) ? 0x04 : 0)
+                        | ((sw & SW_LCBANK2) ? 0 : 0x02) | ((sw & SW_LCRAM) ? 0 : 0x01);
+        default: return -1;
+    }
+}
+
+// Accélérateur, en écriture. L'adresse garde ensuite son effet ordinaire.
+static void zipWrite(uint8_t reg, uint8_t value) {
+    if (!plus) return;
+    if (reg == 0x5A && value == 0x5A) {
+        // Quatre écritures de $5A de suite déverrouillent les registres
+        if (++s.zipStage >= 4) s.zipUnlocked = true;
+        return;
+    }
+    s.zipStage = 0;
+    switch (reg) {
+        case 0x5A:
+            if (value == 0xA5) s.zipUnlocked = false;
+            else if (s.zipUnlocked) s.zipFast = false;
+            break;
+        case 0x5B: if (s.zipUnlocked) s.zipFast = true; break;
+        case 0x5C: if (s.zipUnlocked) s.zipSlots = value; break;
+        case 0x5F: if (s.zipUnlocked) s.zipGameIo = value; break;
+        default: break;
+    }
 }
 
 void setExpansion(uint8_t* ram, uint32_t size) {
@@ -75,6 +190,10 @@ void reset() {
     s.button = button;
     s.countX = cx;
     s.countY = cy;
+    s.zipSlots = 0xE4;
+    s.zipGameIo = 0x40;
+    s.zipFast = plus;
+    migLines();
     setIrq(IRQ_IIC_VBL | IRQ_IIC_MOUSE, false);
 }
 
@@ -179,11 +298,12 @@ static int expansionAccess(uint8_t reg, bool isWrite, uint8_t value) {
 
 // Rend la valeur lue, ou -1 si l'adresse est celle d'un //e ordinaire
 int read(uint8_t reg, uint8_t keyBits) {
-    if (reg == 0x28 && bankedRom) {
-        s.romHigh = !s.romHigh;
-        romBankChanged();
+    if ((reg & 0xF0) == 0x20 && bankedRom) {
+        toggleRomBank();
         return 0;
     }
+    int zip = zipRead(reg);
+    if (zip >= 0) return zip;
     int e = expansionAccess(reg, false, 0);
     if (e >= 0) return e;
     switch (reg) {
@@ -217,11 +337,11 @@ int read(uint8_t reg, uint8_t keyBits) {
 
 // Vrai si l'écriture est traitée ici
 bool write(uint8_t reg, uint8_t value) {
-    if (reg == 0x28 && bankedRom) {
-        s.romHigh = !s.romHigh;
-        romBankChanged();
+    if ((reg & 0xF0) == 0x20 && bankedRom) {
+        toggleRomBank();
         return true;
     }
+    zipWrite(reg, value);
     if (expansionAccess(reg, true, value) >= 0) return true;
     int port = aciaIndex(reg);
     if (port >= 0) {
@@ -238,7 +358,28 @@ bool write(uint8_t reg, uint8_t value) {
 
 void state(StateIO& io) {
     io.bytes(&s, sizeof(s));
+    if (plus) io.bytes(migRam, sizeof(migRam));
+    if (hasExpansion && expRam) {
+        // Extension mémoire : seuls les morceaux de 4 Ko qui ne sont pas vides
+        // sont enregistrés (un volume /RAM peu rempli tient en quelques Ko)
+        const uint32_t chunk = 4096, count = (expMask + 1) / chunk;
+        uint8_t used[32];
+        memset(used, 0, sizeof(used));
+        if (io.saving) {
+            for (uint32_t c = 0; c < count && c < 256; c++) {
+                const uint8_t* p = expRam + c * chunk;
+                for (uint32_t i = 0; i < chunk; i++)
+                    if (p[i]) { used[c >> 3] |= 1 << (c & 7); break; }
+            }
+        }
+        io.bytes(used, sizeof(used));
+        for (uint32_t c = 0; c < count && c < 256; c++) {
+            if (used[c >> 3] & (1 << (c & 7))) io.bytes(expRam + c * chunk, chunk);
+            else if (!io.saving) memset(expRam + c * chunk, 0, chunk);
+        }
+    }
     if (!io.saving) {
+        migLines();
         setIrq(IRQ_IIC_VBL, s.vblIrq);
         setIrq(IRQ_IIC_MOUSE, s.xIrq || s.yIrq);
     }

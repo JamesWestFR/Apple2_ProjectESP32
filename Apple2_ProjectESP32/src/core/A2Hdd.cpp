@@ -86,15 +86,19 @@ bool inserted() { return blocks != 0; }
 
 uint32_t blockCount() { return blocks; }
 
+bool writeProtected() { return readOnly; }
+
 void insert(uint32_t count, bool writeProtected) {
     blocks = count;
     readOnly = writeProtected;
     lastError = 0;
+    Disk35::mediaChanged();
     slotsChanged();
 }
 
 void eject() {
     blocks = 0;
+    Disk35::mediaChanged();
     slotsChanged();
 }
 
