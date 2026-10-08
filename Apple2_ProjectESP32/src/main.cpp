@@ -26,10 +26,19 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "Emu.h"
 
+#ifdef A2_WIFI_APP
+// Second firmware (partition ota_1) : transfert de fichiers par WiFi, voir WifiApp.cpp
+void WifiApp_run();
+#endif
+
 extern "C" void app_main(void) {
 
+#ifdef A2_WIFI_APP
+  WifiApp_run();
+#else
   Emu::setup();
 
   Emu::loop();
+#endif
 
 }

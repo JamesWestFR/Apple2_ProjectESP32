@@ -13,7 +13,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 */
 
-#include "A2.h"
+#include "A2Internal.h"
 
 namespace A2 {
 
@@ -77,6 +77,11 @@ static int undefinedLength(uint8_t op, bool cmos) {
         case 0x19: case 0x1B: case 0x1C: case 0x1D: case 0x1E: case 0x1F: return 3;
         default: return 2;
     }
+}
+
+void cpuState(StateIO& io) {
+    io.value(cpu.pc); io.value(cpu.a); io.value(cpu.x); io.value(cpu.y); io.value(cpu.sp); io.value(cpu.p);
+    io.value(cycles); io.value(carryOver);
 }
 
 void cpuReset() {

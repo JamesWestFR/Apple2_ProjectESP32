@@ -23,6 +23,8 @@ the Free Software Foundation, either version 3 of the License, or
 #include <string>
 #include <vector>
 #include "esp_system.h"
+#include "esp_ota_ops.h"
+#include "esp_partition.h"
 #include "OSD.h"
 #include "Emu.h"
 #include "ESPConfig.h"
@@ -136,13 +138,13 @@ static const char* yesNo(bool v) { return v ? T("oui", "yes") : T("non", "no"); 
 // Contenu des menus
 // ---------------------------------------------------------------------------
 
-enum { MAIN_MEDIA = 0, MAIN_RECENT, MAIN_MACHINE, MAIN_JOYSTICK, MAIN_VIDEO, MAIN_AUDIO, MAIN_HELP,
+enum { MAIN_MEDIA = 0, MAIN_RECENT, MAIN_SAVESTATE, MAIN_LOADSTATE, MAIN_MACHINE, MAIN_JOYSTICK, MAIN_VIDEO, MAIN_AUDIO, MAIN_WIFI, MAIN_HELP,
        MAIN_RESET, MAIN_LANGUAGE, MAIN_CLOSE, MAIN_COUNT };
 enum { MEDIA_DRIVE1 = 0, MEDIA_DRIVE2, MEDIA_HDD, MEDIA_EJECT1, MEDIA_EJECT2, MEDIA_EJECTHDD, MEDIA_SWAP,
        MEDIA_BACK, MEDIA_COUNT };
-enum { MAC_MODEL = 0, MAC_APPLY, MAC_KEYB, MAC_FASTDISK, MAC_INFO, MAC_COLDBOOT, MAC_RESTART, MAC_BACK, MAC_COUNT };
+enum { MAC_MODEL = 0, MAC_APPLY, MAC_KEYB, MAC_FASTDISK, MAC_INFO, MAC_PERGAME, MAC_MOUSE, MAC_COLDBOOT, MAC_RESTART, MAC_BACK, MAC_COUNT };
 enum { JOY_MODE = 0, JOY_BACK, JOY_COUNT };
-enum { VID_MONITOR = 0, VID_SCANLINES, VID_BACK, VID_COUNT };
+enum { VID_MONITOR = 0, VID_DHGR, VID_CHARSET, VID_SCANLINES, VID_BACK, VID_COUNT };
 enum { AUD_VOLUME = 0, AUD_MOCKINGBOARD, AUD_BACK, AUD_COUNT };
 
 static int itemCount(int m) {
@@ -186,10 +188,13 @@ static string itemText(int m, int i) {
             switch (i) {
                 case MAIN_MEDIA: return T("Disquettes et disque dur...", "Disks and hard disk...");
                 case MAIN_RECENT: return T("Derniers fichiers...", "Recent files...");
+                case MAIN_SAVESTATE: return T("Sauver l'etat du jeu (Ctrl+F9)", "Save game state (Ctrl+F9)");
+                case MAIN_LOADSTATE: return T("Reprendre l'etat sauve (Ctrl+F10)", "Load saved state (Ctrl+F10)");
                 case MAIN_MACHINE: return T("Reglages de la machine...", "Machine settings...");
                 case MAIN_JOYSTICK: return T("Reglages de la manette...", "Joystick settings...");
                 case MAIN_VIDEO: return T("Reglages video...", "Video settings...");
                 case MAIN_AUDIO: return T("Reglages du son...", "Audio settings...");
+                case MAIN_WIFI: return T("Transfert de fichiers WiFi...", "WiFi file transfer...");
                 case MAIN_HELP: return T("Aide : les touches...", "Help: keys...");
                 case MAIN_RESET: return T("Reset de l'Apple (Ctrl-Reset)", "Reset Apple (Ctrl-Reset)");
                 case MAIN_LANGUAGE: return Config::language ? "Langues/Languages : EN" : "Langues/Languages : FR";
@@ -232,6 +237,12 @@ static string itemText(int m, int i) {
                              Config::screenInfo == 2 ? T("lecteurs + vitesse", "drives + speed")
                              : Config::screenInfo ? T("lecteurs", "drives") : T("aucune", "none"));
                     return buf;
+                case MAC_PERGAME:
+                    snprintf(buf, sizeof(buf), T("Reglages par jeu : %s", "Per-game settings: %s"), yesNo(Config::perGame));
+                    return buf;
+                case MAC_MOUSE:
+                    snprintf(buf, sizeof(buf), T("Carte souris (slot 2) : %s", "Mouse card (slot 2): %s"), yesNo(Config::mouse));
+                    return buf;
                 case MAC_COLDBOOT: return T("Redemarrer l'Apple a froid", "Cold boot the Apple");
                 case MAC_RESTART: return T("Redemarrer l'ESP32", "Restart ESP32");
                 default: return T("Retour", "Back");
@@ -247,6 +258,14 @@ static string itemText(int m, int i) {
             switch (i) {
                 case VID_MONITOR:
                     snprintf(buf, sizeof(buf), T("Moniteur : %s", "Monitor: %s"), monitorName(Config::monitor));
+                    return buf;
+                case VID_DHGR:
+                    snprintf(buf, sizeof(buf), T("Double haute res. : %s", "Double hi-res: %s"),
+                             Config::dhgrMono ? T("monochrome", "monochrome") : T("couleur", "colour"));
+                    return buf;
+                case VID_CHARSET:
+                    snprintf(buf, sizeof(buf), T("Caracteres : %s", "Characters: %s"),
+                             Config::charset ? T("francais", "French") : T("americains", "US"));
                     return buf;
                 case VID_SCANLINES:
                     snprintf(buf, sizeof(buf), T("Lignes de balayage : %s", "Scanlines: %s"), yesNo(Config::scanlines));
@@ -273,7 +292,7 @@ static void itemHelp(int m, int i, const char*& a, const char*& b) {
     switch (m) {
         case M_MEDIA:
             if (i == MEDIA_DRIVE1) {
-                a = T("Images DSK, DO, PO, NIB, 2MG de 140 Ko.", "140K DSK, DO, PO, NIB, 2MG images.");
+                a = T("Images DSK, DO, PO, NIB, WOZ, 2MG.", "DSK, DO, PO, NIB, WOZ, 2MG images.");
                 b = T("Entree : demarrer. Espace : inserer.", "Return: boots it. Space: inserts only.");
             } else if (i == MEDIA_DRIVE2) {
                 a = T("Seconde disquette d'un programme.", "Second disk of a program.");
@@ -290,7 +309,7 @@ static void itemHelp(int m, int i, const char*& a, const char*& b) {
         case M_MACHINE:
             if (i == MAC_MODEL || i == MAC_APPLY) {
                 a = T("][ : BASIC entier. ][+ : Applesoft.", "][: Integer BASIC. ][+: Applesoft.");
-                b = T("//e : 128 Ko. Enhanced : 65C02.", "//e: 128K. Enhanced: 65C02.");
+                b = T("//e : 128 Ko, cartes. //c : sans slots.", "//e: 128K, cards. //c: no slots.");
             } else if (i == MAC_KEYB) {
                 a = T("La touche marquee A donne un A.", "The key labelled A types an A.");
             } else if (i == MAC_FASTDISK) {
@@ -299,6 +318,12 @@ static void itemHelp(int m, int i, const char*& a, const char*& b) {
             } else if (i == MAC_INFO) {
                 a = T("Lecteurs : 1, 2 ou H quand ils lisent.", "Drives: 1, 2 or H while they work.");
                 b = T("Vitesse : images par seconde, charge.", "Speed: frames per second, load.");
+            } else if (i == MAC_PERGAME) {
+                a = T("Modele, manette, moniteur memorises", "Model, joystick, monitor kept for");
+                b = T("pour chaque image, au demarrage du jeu.", "each image, applied when it boots.");
+            } else if (i == MAC_MOUSE) {
+                a = T("Souris PS/2 sur la seconde prise :", "PS/2 mouse on the second socket:");
+                b = T("prise en compte en redemarrant l'ESP32.", "used after restarting the ESP32.");
             } else if (i == MAC_COLDBOOT) {
                 a = T("Comme eteindre et rallumer l'Apple.", "Like switching the Apple off and on.");
             }
@@ -311,6 +336,12 @@ static void itemHelp(int m, int i, const char*& a, const char*& b) {
             if (i == VID_MONITOR) {
                 a = T("Blanc, vert, ambre : sans couleurs,", "White, green, amber: no colours,");
                 b = T("plus net en texte et en 80 colonnes.", "sharper for text and 80 columns.");
+            } else if (i == VID_DHGR) {
+                a = T("Monochrome : texte fin lisible dans les", "Monochrome: fine text is readable in");
+                b = T("programmes de bureau (A2DeskTop).", "desktop programs (A2DeskTop).");
+            } else if (i == VID_CHARSET) {
+                a = T("Francais (//e, //c) : des accents a la", "French (//e, //c): accents instead of");
+                b = T("place de @ [ ] { } # et au clavier.", "@ [ ] { } etc. Keyboard types them.");
             } else if (i == VID_SCANLINES) {
                 a = T("Une ligne de l'ecran sur deux en noir.", "Every other screen line is black.");
             }
@@ -339,6 +370,8 @@ static void drawHelpPage() {
         "Ctrl+F11   Ctrl-Reset",
         "Ctrl+F12   redemarrage a froid",
         "F9         manette sur les fleches",
+        "Ctrl+F9    sauver l'etat du jeu",
+        "Ctrl+F10   reprendre l'etat sauve",
         "Alt gauche Pomme ouverte (bouton 0)",
         "Windows    Pomme pleine (bouton 1)",
         "Verr Maj   allume : minuscules",
@@ -346,7 +379,6 @@ static void drawHelpPage() {
         "Pause      fige l'emulation",
         "Arret def. vitesse maximale",
         "Impr ecran capture sur la carte SD",
-        "",
         "Liste de fichiers :",
         "Entree     inserer et demarrer",
         "Espace     inserer sans redemarrer",
@@ -359,6 +391,8 @@ static void drawHelpPage() {
         "Ctrl+F11   Ctrl-Reset",
         "Ctrl+F12   cold boot",
         "F9         joystick on the arrows",
+        "Ctrl+F9    save the game state",
+        "Ctrl+F10   load the saved state",
         "Left Alt   Open Apple (button 0)",
         "Windows    Solid Apple (button 1)",
         "Caps Lock  on: lower case allowed",
@@ -366,7 +400,6 @@ static void drawHelpPage() {
         "Pause      freezes the emulation",
         "Scroll Lk  full speed",
         "Print Scr  screenshot to the SD card",
-        "",
         "File list:",
         "Return     insert and boot",
         "Space      insert without booting",
@@ -374,7 +407,7 @@ static void drawHelpPage() {
         "a letter   next file starting with it",
     };
     const char* const* lines = Config::language ? en : fr;
-    for (int i = 0; i < 18; i++) put(ITEMS_TOP + i, 1, lines[i]);
+    for (int i = 0; i < 19; i++) put(ITEMS_TOP - 1 + i, 1, lines[i]);
     show();
 }
 
@@ -602,10 +635,28 @@ static void activate(int m, int i, int dir) {
             switch (i) {
                 case MAIN_MEDIA: enter(M_MEDIA); return;
                 case MAIN_RECENT: openList(TARGET_RECENT); return;
+                case MAIN_SAVESTATE: case MAIN_LOADSTATE:
+                    close();
+                    Emu::stateRequest = i == MAIN_SAVESTATE ? 1 : 2;
+                    return;
                 case MAIN_MACHINE: enter(M_MACHINE); return;
                 case MAIN_JOYSTICK: enter(M_JOYSTICK); return;
                 case MAIN_VIDEO: enter(M_VIDEO); return;
                 case MAIN_AUDIO: enter(M_AUDIO); return;
+                case MAIN_WIFI: {
+                    // Le prochain démarrage se fait sur le firmware WiFi, qui rend
+                    // lui-même la main à l'émulateur pour le suivant
+                    const esp_partition_t* part = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, nullptr);
+                    esp_app_desc_t desc;
+                    if (!part || esp_ota_get_partition_description(part, &desc) != ESP_OK) {
+                        message = T("Absent : build.ps1 -Env wifi -Flash", "Missing: build.ps1 -Env wifi -Flash");
+                        break;
+                    }
+                    A2::Disk::flush();
+                    Config::saveIfDirty();
+                    if (esp_ota_set_boot_partition(part) == ESP_OK) esp_restart();
+                    return;
+                }
                 case MAIN_HELP: enter(M_HELP); return;
                 case MAIN_RESET: Emu::resetRequest = true; close(); return;
                 case MAIN_LANGUAGE: Config::language = !Config::language; Config::dirty = true; break;
@@ -660,6 +711,20 @@ static void activate(int m, int i, int dir) {
                     Config::screenInfo = (uint8_t)((Config::screenInfo + 3 + step) % 3);
                     Config::dirty = true;
                     break;
+                case MAC_PERGAME:
+                    Config::perGame = !Config::perGame;
+                    // Les réglages du jeu en place entrent en vigueur, ou les
+                    // réglages généraux reviennent
+                    Config::switchGame(Emu::gameName());
+                    pendingModel = Config::model;
+                    Video::setMonitor(Config::monitor);
+                    Config::dirty = true;
+                    break;
+                case MAC_MOUSE:
+                    Config::mouse = !Config::mouse;
+                    Config::dirty = true;
+                    A2::Mouse::setEnabled(Config::mouse);
+                    break;
                 case MAC_COLDBOOT:
                     if (!ok) return;
                     Emu::coldBootRequest = true;
@@ -689,6 +754,16 @@ static void activate(int m, int i, int dir) {
             switch (i) {
                 case VID_MONITOR:
                     Config::monitor = (uint8_t)((Config::monitor + MONITOR_COUNT + step) % MONITOR_COUNT);
+                    Config::dirty = true;
+                    Video::setMonitor(Config::monitor);
+                    break;
+                case VID_DHGR:
+                    Config::dhgrMono = !Config::dhgrMono;
+                    Config::dirty = true;
+                    Video::setMonitor(Config::monitor);
+                    break;
+                case VID_CHARSET:
+                    Config::charset = !Config::charset;
                     Config::dirty = true;
                     Video::setMonitor(Config::monitor);
                     break;

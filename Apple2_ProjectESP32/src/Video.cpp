@@ -55,6 +55,8 @@ void setMonitor(uint8_t type) {
     for (int i = 0; i < 16; i++)
         palette[i] = vgaColor(A2::paletteRGB[i][0], A2::paletteRGB[i][1], A2::paletteRGB[i][2]);
     A2::monochrome = type != MONITOR_COLOR;
+    A2::dhiresMono = Config::dhgrMono != 0;
+    A2::setCharset(Config::charset);
     // En monochrome le rendu n'utilise que le noir et le blanc : le blanc prend
     // la teinte du phosphore
     if (type == MONITOR_GREEN) palette[15] = vgaColor(0x55, 0xFF, 0x55);

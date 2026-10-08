@@ -6,7 +6,8 @@ Compile les fichiers de Apple2_ProjectESP32/src/core tels quels, sans ESP32, et
 les pilote par une suite d'actions données sur la ligne de commande, exécutées
 dans l'ordre :
 
-  model=N          0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced (démarrage à froid)
+  model=N          0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced, 4 : //c (démarrage à froid)
+  charset=N        jeu de caractères du //e et du //c : 0 américain, 1 français
   noaux            //e sans mémoire auxiliaire (à placer avant model=)
   disk1=FICHIER    insère une disquette (.dsk .do .po .nib .2mg) ; disk2= de même
   hdd=FICHIER      monte une image comme disque dur ProDOS en slot 7 (.hdv .po .2mg)
@@ -17,7 +18,10 @@ dans l'ordre :
   shot=FICHIER     écrit l'image courante en PNG (560 x 384)
   text             affiche l'écran texte 40 colonnes
   text80           affiche l'écran texte 80 colonnes
-  mono=0|1         rendu monochrome
+  mousecard=0|1    carte souris en slot 2 ; mouse=DX,DY : déplacement ; mbutton=0|1 : bouton
+  serial           affiche ce que le port imprimante du //c a émis
+  mono=0|1         rendu monochrome ; dhgrmono=0|1 : double haute résolution sans couleurs
+  savestate=FICHIER, loadstate=FICHIER   sauvegarde et reprise de l'état de la machine
   wav=FICHIER      enregistre le son des images suivantes (fermé en fin de programme)
   save1=FICHIER    écrit l'image de la disquette 1 telle qu'elle est en mémoire
   state            affiche le 6502 et les soft switches
@@ -85,6 +89,15 @@ bool A2_platformHddWrite(uint32_t block, const uint8_t* buf) {
     return true;
 }
 
+// Ports série du //c : ce que le port 1 (imprimante) émet est gardé pour l'action serial
+static string serialOut;
+void A2_platformSerialOut(int port, uint8_t value) {
+    if (port == 0) serialOut += (char)(value & 0x7F);
+}
+
+static bool stateWrite(void* ctx, void* data, uint32_t len) { return fwrite(data, 1, len, (FILE*)ctx) == len; }
+static bool stateRead(void* ctx, void* data, uint32_t len) { return fread(data, 1, len, (FILE*)ctx) == len; }
+
 static bool readFile(const string& path, vector<uint8_t>& out) {
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) return false;
@@ -111,10 +124,11 @@ static bool insertDisk(int drive, const string& path) {
     A2::Disk::Format fmt;
     int tracks;
     uint32_t offset;
-    const char* error = A2::Disk::identify(lowerExt(path).c_str(), (uint32_t)d.data.size(), d.data.data(),
-                                           (uint32_t)min<size_t>(d.data.size(), 2048), &fmt, &tracks, &offset);
-    if (error) {
-        printf("[!] %s : %s\n", path.c_str(), error);
+    A2::Disk::IdentifyResult error = A2::Disk::identify(lowerExt(path).c_str(), (uint32_t)d.data.size(), d.data.data(),
+                                                        (uint32_t)min<size_t>(d.data.size(), 2048), &fmt, &tracks, &offset);
+    if (error != A2::Disk::ID_OK || fmt == A2::Disk::FMT_HDD) {
+        printf("[!] %s : %s\n", path.c_str(), error == A2::Disk::ID_BAD_2MG ? "en-tete 2MG invalide"
+               : error == A2::Disk::ID_BAD_SIZE ? "taille d'image non reconnue" : "image de disque dur (action hdd=)");
         d.data.clear();
         A2::Disk::eject(drive);
         return false;
@@ -328,7 +342,37 @@ int main(int argc, char** argv) {
         else if (key == "shot") { if (!writePng(val)) printf("[!] ecriture impossible : %s\n", val.c_str()); }
         else if (key == "text") dumpText(false);
         else if (key == "text80") dumpText(true);
+        else if (key == "mousecard") A2::Mouse::setEnabled(atoi(val.c_str()) != 0);
+        else if (key == "mouse") {
+            // Déplacement DX,DY en plusieurs images, comme une vraie souris
+            int dx = atoi(val.c_str()), dy = 0;
+            size_t comma = val.find(',');
+            if (comma != string::npos) dy = atoi(val.c_str() + comma + 1);
+            for (int step = 0; step < 16; step++) {
+                A2::Mouse::move(dx * (step + 1) / 16 - dx * step / 16, dy * (step + 1) / 16 - dy * step / 16);
+                runFrames(1);
+            }
+        }
+        else if (key == "mbutton") { A2::Mouse::setButton(0, atoi(val.c_str()) != 0); runFrames(4); }
+        else if (key == "charset") A2::setCharset((uint8_t)atoi(val.c_str()));
+        else if (key == "serial") {
+            // Affiche ce que le port imprimante du //c a émis
+            for (char& ch : serialOut) if (ch == 0x0D) ch = '\n';
+            printf("[port 1] %s\n", serialOut.c_str());
+            serialOut.clear();
+        }
         else if (key == "mono") A2::monochrome = atoi(val.c_str()) != 0;
+        else if (key == "dhgrmono") A2::dhiresMono = atoi(val.c_str()) != 0;
+        else if (key == "savestate" || key == "loadstate") {
+            bool saving = key == "savestate";
+            FILE* f = fopen(val.c_str(), saving ? "wb" : "rb");
+            bool ok = f != nullptr;
+            if (ok) {
+                ok = saving ? A2::saveState(stateWrite, f) : A2::loadState(stateRead, f);
+                fclose(f);
+            }
+            printf("[%s] %s %s\n", ok ? "+" : "!", key.c_str(), val.c_str());
+        }
         else if (key == "state") printState();
         else if (key == "mem") {
             int addr = (int)strtol(val.c_str(), nullptr, 16);

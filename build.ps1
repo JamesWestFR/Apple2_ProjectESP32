@@ -4,6 +4,7 @@
 #   .\build.ps1 -Flash             compile et flashe (port detecte automatiquement)
 #   .\build.ps1 -Flash -Monitor 20 ... puis affiche 20 s de journal serie
 #   .\build.ps1 -Monitor 20        journal serie seul (reset de la carte), sans compiler
+#   .\build.ps1 -Env wifi -Flash   second firmware (transfert de fichiers par WiFi), partition ota_1
 #
 # ESP-IDF refuse les chemins contenant des espaces : les sources de ce dossier
 # sont donc recopiees dans $BuildRoot avant la compilation.
@@ -62,9 +63,16 @@ if ($compile) {
     Push-Location $dst
     try {
         $pioArgs = @("-m", "platformio", "run", "-e", $Env)
-        if ($Flash) { $pioArgs += @("--target", "upload", "--upload-port", $Port) }
+        # Le firmware "wifi" va dans la seconde partition d'application : il est
+        # flashe a part, sans toucher a l'emulateur ni a la table des partitions
+        if ($Flash -and $Env -ne "wifi") { $pioArgs += @("--target", "upload", "--upload-port", $Port) }
         & $python @pioArgs
         if ($LASTEXITCODE -ne 0) { throw "PlatformIO a echoue (code $LASTEXITCODE)." }
+        if ($Flash -and $Env -eq "wifi") {
+            $esptool = Join-Path $env:USERPROFILE ".platformio\packages\tool-esptoolpy\esptool.py"
+            & $python $esptool --chip esp32 --port $Port --baud 460800 write_flash 0x220000 ".pio\build\wifi\firmware.bin"
+            if ($LASTEXITCODE -ne 0) { throw "esptool a echoue (code $LASTEXITCODE)." }
+        }
     } finally {
         Pop-Location
     }

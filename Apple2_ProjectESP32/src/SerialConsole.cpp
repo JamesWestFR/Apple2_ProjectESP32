@@ -14,9 +14,12 @@ scripts/a2console.py. Une commande par ligne :
   e1 / e2      éjecte ; eh : retire le disque dur (une grande image passée à d1 y est montée)
   b            redémarrage à froid de l'Apple
   r            Ctrl-Reset
-  m N          modèle (0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced)
+  m N          modèle (0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced, 4 : //c)
+  cs 0|1       caractères américains ou français
   x            capture d'écran sur la carte SD
+  ss / sl      sauvegarde / reprise de l'état (Ctrl+F9 / Ctrl+F10)
   u            vitesse maximale, oui ou non
+  mc 0|1       carte souris absente ou présente ; mm DX DY : déplacement ; mb 0|1 : bouton
   i            redessine toute l'image à chaque fois, oui ou non (mesure du pire cas)
   menu         ouvre ou ferme le menu (comme F12) ; files : le choix d'une disquette (F11)
   vk TOUCHE    une touche dans le menu : up, down, left, right, enter, esc, pgdn, space, ou un caractère
@@ -310,6 +313,8 @@ static void execute(char* cmd) {
         }
     }
     else if (!strcmp(cmd, "x")) Emu::screenshotRequest = true;
+    else if (!strcmp(cmd, "ss")) Emu::stateRequest = 1;
+    else if (!strcmp(cmd, "sl")) Emu::stateRequest = 2;
     else if (!strcmp(cmd, "menu")) OSD::toggle(OSD::MENU_MAIN);
     else if (!strcmp(cmd, "files")) OSD::toggle(OSD::MENU_FILES);
     else if (!strcmp(cmd, "vk")) {
@@ -327,6 +332,15 @@ static void execute(char* cmd) {
         else ascii = (uint8_t)arg[0];
         OSD::key(vk, ascii);
     }
+    else if (!strcmp(cmd, "mm")) {
+        // mm DX DY : déplacement de la souris ; mb 0|1 : son bouton
+        char* end;
+        int dx = (int)strtol(arg, &end, 10), dy = (int)strtol(end, nullptr, 10);
+        A2::Mouse::move(dx, dy);
+    }
+    else if (!strcmp(cmd, "mb")) A2::Mouse::setButton(0, atoi(arg) != 0);
+    else if (!strcmp(cmd, "mc")) { Config::mouse = atoi(arg) != 0; Config::save(); A2::Mouse::setEnabled(Config::mouse); }
+    else if (!strcmp(cmd, "cs")) { Config::charset = atoi(arg) != 0; Config::save(); Video::setMonitor(Config::monitor); }
     else if (!strcmp(cmd, "u")) Emu::turbo = !Emu::turbo;
     else if (!strcmp(cmd, "i")) Emu::forceRedraw = !Emu::forceRedraw;
     else if (*cmd) printf("A2 ? %s\n", cmd);

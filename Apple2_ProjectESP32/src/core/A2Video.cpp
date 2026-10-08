@@ -25,6 +25,7 @@ the Free Software Foundation, either version 3 of the License, or
 namespace A2 {
 
 bool monochrome = false;
+bool dhiresMono = false;
 
 // Couleurs Apple, dans l'ordre de la basse résolution
 const uint8_t paletteRGB[16][3] = {
@@ -91,9 +92,19 @@ void setPixelMap(const uint8_t* map) {
 }
 
 static const uint8_t* charRom = gb_rom_video2e_enh;
+static uint8_t charset = 0;
+
+void videoSetModel();
+
+void setCharset(uint8_t c) {
+    charset = c;
+    videoSetModel();
+}
 
 void videoSetModel() {
-    charRom = (model() == MODEL_IIE_ENH) ? gb_rom_video2e_enh : gb_rom_video2e;
+    bool enhanced = model() == MODEL_IIE_ENH || model() == MODEL_IIC;
+    if (charset == 1) charRom = enhanced ? gb_rom_video2e_enh_fr : gb_rom_video2e_fr;
+    else charRom = enhanced ? gb_rom_video2e_enh : gb_rom_video2e;
     buildPixelTables();
     videoInvalidate();
 }
@@ -260,7 +271,7 @@ A2_FAST static void renderDoubleHires(const uint8_t* aux, const uint8_t* mainp, 
     for (int col = 0; col < 40; col += 2) {
         uint32_t w = (uint32_t)(aux[col] & 0x7F) | ((uint32_t)(mainp[col] & 0x7F) << 7)
                    | ((uint32_t)(aux[col + 1] & 0x7F) << 14) | ((uint32_t)(mainp[col + 1] & 0x7F) << 21);
-        if (monochrome) {
+        if (monochrome || dhiresMono) {
             for (int i = 0; i < 28; i++) {
                 *out++ = (w & 1) ? white : black;
                 w >>= 1;
@@ -309,7 +320,7 @@ A2_FAST bool renderLine(int y, uint8_t* out) {
 
     // Ce que la ligne montre : le mode, et où sont ses octets
     int kind, addr;
-    uint32_t mode = monochrome ? 0x100 : 0;
+    uint32_t mode = (monochrome ? 0x100 : 0) | (dhiresMono ? 0x800 : 0);
     if ((sw & SW_TEXT) || ((sw & SW_MIXED) && y >= 160)) {
         kind = col80 ? KIND_TEXT80 : KIND_TEXT40;
         addr = textAddress(y >> 3);

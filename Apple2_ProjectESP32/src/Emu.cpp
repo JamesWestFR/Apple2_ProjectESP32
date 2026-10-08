@@ -19,6 +19,7 @@ the Free Software Foundation, either version 3 of the License, or
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
@@ -38,6 +39,8 @@ the Free Software Foundation, either version 3 of the License, or
 #include "SerialConsole.h"
 #include "core/A2.h"
 
+using namespace std;
+
 namespace Emu {
 
 fabgl::PS2Controller PS2Controller;
@@ -47,9 +50,11 @@ bool turbo = false;
 bool resetRequest = false;
 bool coldBootRequest = false;
 bool screenshotRequest = false;
+uint8_t stateRequest = 0;
 bool forceRedraw = false;
 float statFps = 0, statEmulatedFps = 0, statFrameMs = 0;
 
+static bool mouseAtBoot = false;    // le port souris PS/2 a été initialisé
 static TaskHandle_t audioTaskHandle = NULL;
 static uint8_t* audioMix = nullptr;      // son de la dernière image, rempli par l'émulation
 static uint8_t* audioOut = nullptr;      // copie envoyée à la sortie
@@ -136,6 +141,7 @@ void setup() {
     A2::init(mainRam, auxRam);
     A2::setModel((A2::Model)Config::model);
     A2::Mockingboard::setEnabled(Config::mockingboard);
+    A2::Mouse::setEnabled(Config::mouse);
 
     // Disquettes restées dans les lecteurs. Une image supprimée ou illisible
     // est oubliée plutôt que réessayée à chaque démarrage.
@@ -152,8 +158,15 @@ void setup() {
         Config::save();
     }
 
-    // PS/2 (FabGL) : le clavier sur le port 0
-    PS2Controller.begin(fabgl::PS2Preset::KeyboardPort0, fabgl::KbdMode::CreateVirtualKeysQueue);
+    // PS/2 (FabGL) : le clavier sur le port 0 et, si la carte souris est en
+    // place, une souris sur le port 1. Sans souris branchée, son initialisation
+    // attend une réponse pendant une seconde environ.
+    mouseAtBoot = Config::mouse != 0;
+    PS2Controller.begin(mouseAtBoot ? fabgl::PS2Preset::KeyboardPort0_MousePort1 : fabgl::PS2Preset::KeyboardPort0,
+                        fabgl::KbdMode::CreateVirtualKeysQueue);
+    if (mouseAtBoot)
+        printf("| Apple2_ProjectESP32: PS/2 mouse %s\n",
+               PS2Controller.mouse() && PS2Controller.mouse()->isMouseAvailable() ? "found" : "NOT found");
 
     xTaskCreatePinnedToCore(&audioTask, "audioTask", 2048, NULL, configMAX_PRIORITIES - 1, &audioTaskHandle, 1);
 
@@ -185,11 +198,96 @@ static void takeScreenshot() {
     }
 }
 
+// Réglages par jeu : ceux de l'image en place (le disque dur d'abord, sinon la
+// disquette du lecteur 1), ou les réglages généraux
+string gameName() {
+    return !DiskImage::hddPath().empty() ? DiskImage::hddName() : DiskImage::name(0);
+}
+
+static void applyGameSettings() {
+    Config::switchGame(gameName());
+    Video::setMonitor(Config::monitor);
+    if (Config::model != A2::model()) A2::setModel((A2::Model)Config::model);
+}
+
+// Souris PS/2 -> carte souris : déplacements et boutons reçus depuis la dernière image
+static void pollMouse() {
+    if (!mouseAtBoot) return;
+    fabgl::Mouse* mouse = PS2Controller.mouse();
+    if (!mouse) return;
+    fabgl::MouseDelta delta;
+    int dx = 0, dy = 0;
+    bool any = false;
+    for (int guard = 0; guard < 16 && mouse->deltaAvailable(); guard++) {
+        if (!mouse->getNextDelta(&delta, 0)) break;
+        dx += delta.deltaX;
+        dy -= delta.deltaY;         // le PS/2 compte vers le haut, l'Apple vers le bas
+        any = true;
+    }
+    if (!any || OSD::active || paused) return;
+    A2::Mouse::move(dx, dy);
+    A2::Mouse::setButton(0, delta.buttons.left);
+    A2::Mouse::setButton(1, delta.buttons.right);
+}
+
+// Imprimante du //c (port série 1) : ce qu'elle reçoit est ajouté à PRINTER.TXT,
+// écrit sur la carte SD quand l'impression s'arrête
+#define PRINTER_BUFFER 512
+static char printerBuffer[PRINTER_BUFFER];
+static int printerCount = 0, printerIdle = 0;
+
+static void printerFlush() {
+    if (printerCount == 0) return;
+    FILE* f = FileUtils::SDReady ? fopen("/sd/PRINTER.TXT", "a") : nullptr;
+    if (f) {
+        fwrite(printerBuffer, 1, printerCount, f);
+        fclose(f);
+    }
+    printerCount = 0;
+}
+
+static bool stateWrite(void* ctx, void* data, uint32_t len) { return fwrite(data, 1, len, (FILE*)ctx) == len; }
+static bool stateRead(void* ctx, void* data, uint32_t len) { return fread(data, 1, len, (FILE*)ctx) == len; }
+
+// L'état est rangé à côté de l'image en place, sous son nom : JEU.DSK -> JEU.A2S
+// (le disque dur d'abord, sinon la disquette du lecteur 1)
+static string statePath() {
+    string base = !DiskImage::hddPath().empty() ? DiskImage::hddPath()
+                : !DiskImage::path(0).empty() ? DiskImage::path(0) : FileUtils::MountPoint + "/APPLE2.";
+    size_t dot = base.find_last_of('.');
+    if (dot != string::npos && dot > base.find_last_of('/')) base = base.substr(0, dot);
+    return base + ".A2S";
+}
+
+static void saveOrLoadState(bool saving) {
+    if (!FileUtils::SDReady) { showNotice(T("PAS DE CARTE SD", "NO SD CARD")); return; }
+    string path = statePath();
+    FILE* f = fopen(path.c_str(), saving ? "wb" : "rb");
+    if (!f) { showNotice(saving ? T("ECRITURE IMPOSSIBLE", "WRITE FAILED") : T("PAS D'ETAT SAUVE", "NO SAVED STATE")); return; }
+    bool ok;
+    if (saving) {
+        ok = A2::saveState(stateWrite, f);
+    } else {
+        A2::Disk::flush();
+        ok = A2::loadState(stateRead, f);
+        // L'état reprend son modèle d'Apple, jusqu'au prochain changement au menu
+        Config::model = (uint8_t)A2::model();
+        Keyb::releaseAll();
+    }
+    fclose(f);
+    if (saving && !ok) remove(path.c_str());
+    showNotice(!ok ? (saving ? T("ECRITURE IMPOSSIBLE", "WRITE FAILED") : T("ETAT ILLISIBLE", "BAD STATE FILE"))
+                   : saving ? T("ETAT SAUVE", "STATE SAVED") : T("ETAT REPRIS", "STATE LOADED"));
+    printf("| Apple2_ProjectESP32: state %s %s: %s\n", saving ? "save" : "load", path.c_str(), ok ? "ok" : "FAILED");
+}
+
 void loop() {
     // La boucle ne dort jamais (elle attend le retour vertical de l'écran) : la
     // tâche IDLE de ce cœur ne tourne plus, on la retire donc de la
     // surveillance du chien de garde
     esp_task_wdt_delete(xTaskGetIdleTaskHandleForCPU(0));
+
+    applyGameSettings();
 
     int64_t frameStart = esp_timer_get_time();
     int64_t statStart = frameStart, statCpu = 0;
@@ -201,10 +299,13 @@ void loop() {
     for (;;) {
         Keyb::process();
         SerialConsole::tick();
+        pollMouse();
 
         if (coldBootRequest) {
             coldBootRequest = resetRequest = false;
             A2::Disk::flush();
+            // Les réglages du jeu en place entrent en vigueur au démarrage de l'Apple
+            applyGameSettings();
             A2::powerOn();
             Keyb::releaseAll();
         }
@@ -274,6 +375,12 @@ void loop() {
             screenshotRequest = false;
             takeScreenshot();
         }
+        // Une demi-seconde sans rien recevoir : l'impression est finie
+        if (printerCount && ++printerIdle > 30) printerFlush();
+        if (stateRequest) {
+            if (!OSD::active) saveOrLoadState(stateRequest == 1);
+            stateRequest = 0;
+        }
 
         waitVsync(frameStart);
         frameStart = esp_timer_get_time();
@@ -297,4 +404,14 @@ void loop() {
     }
 }
 
+}
+
+void A2_platformSerialOut(int port, uint8_t value) {
+    if (port != 0) return;
+    // L'Apple émet souvent avec le bit 7 levé ; fin de ligne : retour chariot
+    char c = (char)(value & 0x7F);
+    if (c == 0x0D) c = '\n';
+    Emu::printerBuffer[Emu::printerCount++] = c;
+    Emu::printerIdle = 0;
+    if (Emu::printerCount >= PRINTER_BUFFER) Emu::printerFlush();
 }

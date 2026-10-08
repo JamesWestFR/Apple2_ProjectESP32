@@ -26,6 +26,12 @@ the Free Software Foundation, either version 3 of the License, or
 namespace A2 {
 
 bool irqLine = false;
+static uint8_t irqSources = 0;
+
+void setIrq(uint8_t source, bool on) {
+    if (on) irqSources |= source; else irqSources &= ~source;
+    irqLine = irqSources != 0;
+}
 bool timerArmed = false;
 uint32_t timerDue = 0;
 
@@ -191,7 +197,7 @@ static void updateIrq() {
             armed = true;
         }
     }
-    irqLine = line;
+    setIrq(IRQ_MOCKINGBOARD, line);
     timerArmed = armed;
     timerDue = due;
 }
@@ -320,6 +326,19 @@ void write(uint16_t addr, uint8_t value) {
 void setEnabled(bool on) {
     enabled = on;
     slotsChanged();
+}
+
+void state(StateIO& io) {
+    // Les écritures en attente rejoignent d'abord les puces
+    if (io.saving) frameBegin();
+    io.bytes(via, sizeof(via));
+    io.bytes(ay, sizeof(ay));
+    io.bytes(regShadow, sizeof(regShadow));
+    if (!io.saving) {
+        eventCount = 0;
+        frameStart = cycles;
+        updateIrq();
+    }
 }
 
 void reset() {

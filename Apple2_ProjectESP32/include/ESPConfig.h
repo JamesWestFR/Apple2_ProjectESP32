@@ -32,15 +32,25 @@ public:
     static uint8_t joystick;     // manette sur les flèches
     static uint8_t monitor;      // MONITOR_*
     static uint8_t scanlines;    // une ligne VGA sur deux en noir
+    static uint8_t dhgrMono;     // double haute résolution sans couleurs
+    static uint8_t charset;      // caractères du //e et du //c : 0 américains, 1 français
     static uint8_t fastDisk;     // émulation accélérée tant que le lecteur tourne
     static uint8_t volume;       // 0 à 8
     static uint8_t mockingboard; // carte son dans le slot 4
+    static uint8_t mouse;        // carte souris dans le slot 2, souris PS/2 sur la seconde prise
     static uint8_t language;     // 0 : français, 1 : anglais
     static uint8_t screenInfo;   // 0 : rien, 1 : voyants des lecteurs, 2 : voyants et vitesse
     static string lastDir;       // dernier dossier ouvert dans le sélecteur de fichiers
     static string disk[2];       // disquettes restées dans les lecteurs
     static string hdd;           // image du disque dur
     static vector<string> recent; // derniers fichiers utilisés, le plus récent d'abord
+
+    // Réglages par jeu : le modèle, la manette, le moniteur et la double haute
+    // résolution sont mémorisés pour chaque image, dans A2GAMES.CFG sur la carte SD.
+    // Un jeu sans réglages reçoit les réglages généraux.
+    static uint8_t perGame;
+    static string currentGame;   // jeu dont les réglages sont en vigueur ("" : réglages généraux)
+    static void switchGame(const string& name);
     static void addRecent(const string& path);
 
     static bool dirty;

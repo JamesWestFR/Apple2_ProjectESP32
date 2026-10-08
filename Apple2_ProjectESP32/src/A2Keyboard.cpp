@@ -154,6 +154,22 @@ static uint8_t translate(const VirtualKeyItem& item) {
         else c = item.SHIFT ? k.usShift : k.us;
         break;
     }
+    // Jeu de caractères français : les touches accentuées du clavier AZERTY
+    // donnent le code que l'Apple français affiche avec cet accent
+    if (!c && Config::keyLayout == KEYB_FR && Config::charset && !item.RALT) {
+        switch (sc) {
+            case 0x1E: if (!item.SHIFT) c = '{'; break;     // é
+            case 0x3D: if (!item.SHIFT) c = '}'; break;     // è
+            case 0x46: if (!item.SHIFT) c = '\\'; break;    // ç
+            case 0x45: if (!item.SHIFT) c = '@'; break;     // à
+            case 0x52: if (!item.SHIFT) c = '|'; break;     // ù
+            case 0x4E: if (item.SHIFT) c = '['; break;      // °
+            case 0x4A: if (item.SHIFT) c = ']'; break;      // §
+            case 0x5B: if (item.SHIFT) c = '#'; break;      // £
+            case 0x54: if (item.SHIFT) c = '~'; break;      // ¨
+            default: break;
+        }
+    }
     if (!c) return 0;
 
     // Verr Maj éteint : majuscules, comme sur un Apple dont la touche est enfoncée
@@ -191,7 +207,14 @@ static void handle(const VirtualKeyItem& item) {
             case VK_PRINTSCREEN:
                 Emu::screenshotRequest = true;
                 return;
+            case VK_F10:
+                // Ctrl+F10 : reprise de l'état sauvé
+                if (!item.CTRL) break;
+                Emu::stateRequest = 2;
+                return;
             case VK_F9:
+                // Ctrl+F9 : sauvegarde de l'état
+                if (item.CTRL) { Emu::stateRequest = 1; return; }
                 Config::joystick = !Config::joystick;
                 Config::dirty = true;
                 releaseAll();

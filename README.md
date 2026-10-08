@@ -1,6 +1,6 @@
 # Apple2_ProjectESP32 — émulateur Apple II pour ESP32
 
-Émulateur Apple ][, ][+, //e et //e Enhanced pour la carte **LILYGO TTGO VGA32**
+Émulateur Apple ][, ][+, //e, //e Enhanced et //c pour la carte **LILYGO TTGO VGA32**
 (ESP32-PICO, sortie VGA, clavier PS/2, carte SD). Il reprend l'infrastructure de
 [CPC_ProjectESP32](https://github.com/JamesWestFR/CPC_ProjectESP32) et un cœur
 d'émulation Apple II écrit pour ce projet, avec
@@ -12,7 +12,7 @@ d'émulation Apple II écrit pour ce projet, avec
 C'est un projet personnel et indépendant, sans lien avec les auteurs de ces
 projets ni avec Apple.
 
-## État au 7 octobre 2026
+## État au 8 octobre 2026
 
 Le firmware tourne sur la carte. Un premier essai avec écran, clavier et
 haut-parleur a été concluant (image et son, 6 et 7 octobre) ; tout le reste de
@@ -42,7 +42,25 @@ Vérifié sur la carte, par le port série :
 - disque dur de 32 Mo : sur un fichier de cette taille créé sur la carte SD,
   un bloc se lit en 1,2 ms à la suite et en 19 ms en accès dispersé (51 ms au
   pire), sans erreur ;
-- le nouveau menu, en français et en anglais : chaque page relue en image.
+- le nouveau menu, en français et en anglais : chaque page relue en image ;
+- sauvegarde d'état : Choplifter sauvé puis repris depuis la carte SD ;
+- écriture disque immédiate : `SAVE` sous DOS 3.3 est sur la carte SD dès la
+  fin de l'écriture du secteur ;
+- réglages par jeu : DOS 3.3 mémorisé en ][+, Karateka sur les réglages
+  généraux, retour à DOS 3.3 en ][+ ;
+- image `.woz` : Aztec démarre, au même point que sur PC ;
+- Apple //c : démarrage sur DOS 3.3 depuis son lecteur intégré, `PRINT 6*7`,
+  chargement de Karateka ; jeu de caractères français affiché ;
+- Apple //c, souris intégrée : MousePaint s'ouvre au clic et son pointeur suit
+  les déplacements envoyés par la console ; imprimante : `PR#1` puis `PRINT`
+  crée `PRINTER.TXT` sur la carte SD ;
+- carte souris : des déplacements envoyés par la console mènent le pointeur
+  d'A2DeskTop à l'endroit attendu (aucune vraie souris PS/2 n'a été essayée) ;
+- transfert WiFi : le choix du menu redémarre la carte sur le second firmware,
+  qui crée son réseau et annonce `http://192.168.4.1` ; un reset revient à
+  l'émulateur. La page web elle-même n'a pas été ouverte ;
+- `8-bit Games.hdv` (32 Mo), envoyé par le port série : lanceur FastBoot puis
+  Choplifter.
 
 **À essayer à fond, avec écran, clavier et haut-parleur** : les deux
 dispositions du clavier, la Mockingboard à l'oreille, la manette au clavier,
@@ -70,6 +88,20 @@ les mêmes fichiers du cœur d'émulation (`src/core/`) :
   `CATALOG,D2` ;
 - double haute résolution : aplats de couleur dessinés en BASIC, et bureau
   d'A2DeskTop ;
+- sauvegarde d'état : Karateka repris en plein jeu donne, 400 images plus
+  tard, une image identique au pixel près, y compris sur une machine démarrée
+  dans un autre modèle ; le lecteur de musique Mockingboard reprend au même
+  instant de son morceau ;
+- images `.woz` : sur dix disquettes d'origine essayées, Aztec, Olympic
+  Decathlon et Sammy Lightfoot démarrent (relus en image), Puyo et MousePaint
+  chargent sans erreur ; Frogger, Wasteland, Glutton, King's Quest et Miner
+  2049er restent bloqués sur leur protection ;
+- Apple //c : bandeau « Apple //c », DOS 3.3 (`SAVE` puis `RUN`), ProDOS,
+  80 colonnes, Karateka jusqu'au jeu, Pandemonium, Aztec en `.woz` ;
+- jeu de caractères français : à, °, ç, §, é, ù, è, £ aux codes de @ [ \ ] { | } #,
+  en 40 et en 80 colonnes ;
+- carte souris : A2DeskTop et MousePaint la reconnaissent ; le pointeur suit
+  les déplacements, le clic ouvre MousePaint ;
 - disque dur : ProDOS démarre du slot 7 sur //e et sur ][+ ; l'image
   `8-bit Games.hdv` (32 Mo) démarre sur son lanceur FastBoot, d'où Choplifter,
   Mario Bros, Alien Typhoon et Pitfall II se lancent.
@@ -81,21 +113,24 @@ résolution.
 
 | | |
 |---|---|
-| Modèles | Apple ][ (Integer BASIC), ][+ (Applesoft, Autostart), //e (6502), //e Enhanced (65C02, MouseText) |
+| Modèles | Apple ][ (Integer BASIC), ][+ (Applesoft, Autostart), //e (6502), //e Enhanced (65C02, MouseText), //c (première ROM, dite 255) |
+| Caractères | américains, ou français sur //e, //e Enhanced et //c |
 | Mémoire | 64 Ko dont la carte langage ; 128 Ko sur //e (mémoire auxiliaire en PSRAM) |
 | Vidéo | texte 40 et 80 colonnes, basse et haute résolution, doubles résolutions, mode mixte, clignotement ; couleur ou moniteur blanc, vert, ambre |
 | Son | haut-parleur (bascule de `$C030`) ; carte Mockingboard en slot 4 (deux 6522, deux AY-3-8910, six voies) |
-| Disquettes | carte Disk II en slot 6, deux lecteurs 5,25 pouces, en lecture et en écriture : `.dsk`, `.do`, `.po`, `.nib`, `.2mg` de 140 Ko |
+| Disquettes | carte Disk II en slot 6, deux lecteurs 5,25 pouces, en lecture et en écriture : `.dsk`, `.do`, `.po`, `.nib`, `.2mg` de 140 Ko ; `.woz` en lecture seule |
 | Disque dur | carte ProDOS en slot 7 : images par blocs `.hdv`, `.po`, `.2mg`, de 800 Ko à 32 Mo, lues sur la carte SD |
-| Entrées | clavier, deux boutons (touches Pomme), manette au clavier |
+| Entrées | clavier, deux boutons (touches Pomme), manette au clavier ; carte souris AppleMouse II en slot 2, avec une souris PS/2 sur la seconde prise |
 
 Ce qui n'est pas émulé : l'**Apple IIGS** (processeur 65C816 à 2,8 MHz, 1 Mo de
 RAM, vidéo et son propres : hors de portée de cette carte). Les images de
 800 Ko du dossier `FilesDSK/Apple2GS` se montent comme disque dur, mais leurs
 programmes sont faits pour le IIGS et ne tournent pas sur un //e. Ne sont pas
-émulés non plus : l'Apple //c ; la cassette ; la souris, la carte série, la
-synthèse vocale de la Mockingboard ; les images `.woz` et les protections qui
-mesurent des durées.
+émulés non plus : sur le //c, la réception sur les ports série et le port 2
+(modem), et, comme sur un vrai, aucune carte (ni disque dur ni Mockingboard) ;
+les ROM suivantes du //c et le //c Plus ; la cassette ; la carte série, la synthèse
+vocale de la Mockingboard ; les protections de disquette qui mesurent
+des durées (une partie des images `.woz`).
 
 ## Utilisation
 
@@ -119,6 +154,8 @@ sans fin, comme un vrai : **Ctrl+F11** (Ctrl-Reset) rend la main au BASIC.
 | Retour arrière, Suppr | Flèche gauche, touche DELETE du //e |
 | Verr Maj | Éteint : majuscules (par défaut, comme le veulent la plupart des programmes). Allumé : minuscules et majuscules |
 | F9 | Manette sur les flèches, oui ou non : Ctrl droite et Maj droite sont alors les boutons 0 et 1 |
+| Ctrl+F9 | Sauvegarde de l'état du jeu, dans un fichier `.A2S` à côté de l'image (`JEU.DSK` donne `JEU.A2S`) |
+| Ctrl+F10 | Reprise de l'état sauvé pour l'image en place |
 | Pause | Fige l'émulation ; un second appui la relance |
 | Arrêt défil | Vitesse maximale ; un second appui revient à la vitesse normale |
 | Impr écran | Capture de l'écran dans `A2SHOTnn.BMP`, à la racine de la carte SD |
@@ -147,6 +184,20 @@ l'anglais.
   d'abord.
 - **Modèle** (réglages de la machine) : choisi puis appliqué par « Appliquer
   le modèle », avec un redémarrage de l'Apple.
+- **Sauver / reprendre l'état du jeu** : toute la machine (6502, mémoire,
+  lecteurs, carte son) est écrite sur la carte SD ; le contenu des disquettes
+  n'en fait pas partie. Un état reprend son modèle d'Apple.
+- **Réglages par jeu** (réglages de la machine, non par défaut) : le modèle,
+  la manette, le moniteur et la double haute résolution sont mémorisés pour
+  chaque image, dans `A2GAMES.CFG` sur la carte SD, et entrent en vigueur au
+  démarrage de l'Apple. Un jeu sans réglages propres suit les réglages
+  généraux.
+- **Double haute résolution** (réglages vidéo) : couleur ou monochrome, sans
+  changer le reste de l'affichage.
+- **Caractères** (réglages vidéo) : américains ou français, sur //e et //c.
+  En français, les lettres accentuées remplacent @ [ \ ] { | } # ~ comme sur
+  un Apple français (l'invite du BASIC devient §), et les touches é, è, ç, à,
+  ù, °, §, £ du clavier AZERTY donnent ces caractères.
 - **Infos à l'écran** : rien, les voyants des lecteurs (par défaut), ou les
   voyants et la vitesse (images par seconde et part du temps d'une image prise
   par l'émulation).
@@ -156,10 +207,34 @@ l'anglais.
 - **Disquette rapide** : tant que le lecteur tourne, l'émulation va aussi vite
   que l'ESP32 le permet. Le son est alors haché.
 - **Mockingboard** : présence de la carte son dans le slot 4 (oui par défaut).
+- **Sur le //c** : la souris est intégrée (le réglage « Carte souris » sert
+  seulement à mettre en service la souris PS/2 de la seconde prise) ; ce que le
+  port 1 imprime (`PR#1`) est ajouté à `PRINTER.TXT`, à la racine de la carte SD.
+- **Carte souris** (réglages de la machine, non par défaut) : carte AppleMouse II
+  dans le slot 2. La souris PS/2 se branche sur la seconde prise de la carte ;
+  elle est prise en compte au redémarrage de l'ESP32. Bouton gauche : bouton de
+  la souris de l'Apple.
+
+Transfert de fichiers par WiFi : le choix « Transfert de fichiers WiFi... » du
+menu principal fait redémarrer la carte sur un second firmware, qui sert la
+carte SD à un navigateur web : on peut y envoyer des fichiers, en télécharger,
+en supprimer et créer des dossiers, sans sortir la carte SD.
+
+1. Sans rien préparer, la carte crée son propre réseau WiFi
+   `Apple2_ProjectESP32` (mot de passe `apple2esp32`). Y connecter le PC ou le
+   téléphone, puis ouvrir `http://192.168.4.1`.
+2. Ou bien créer à la racine de la carte SD un fichier `WIFI.TXT` avec le nom
+   du réseau sur la première ligne et son mot de passe sur la seconde : la
+   carte le rejoint, et affiche à l'écran l'adresse à ouvrir.
+
+Pour revenir à l'émulateur : le bouton de la page, la touche Échap sur la
+carte, ou simplement éteindre et rallumer. Le second firmware s'installe une
+fois avec `.\build.ps1 -Env wifi -Flash` ; tant qu'il ne l'est pas, le menu le
+dit.
 
 En double haute résolution, le texte fin d'un programme comme A2DeskTop est
-illisible en couleur, comme sur un moniteur couleur d'époque : choisir le
-moniteur blanc.
+illisible en couleur, comme sur un moniteur couleur d'époque : passer la
+double haute résolution en monochrome.
 
 Un chiffre en bas à droite de l'écran signale le lecteur qui travaille.
 
@@ -172,6 +247,7 @@ Prérequis : Python avec PlatformIO (`pip install platformio`) et `setuptools<81
 .\build.ps1 -Flash              # compile et flashe
 .\build.ps1 -Flash -Monitor 20  # ... puis affiche 20 s de journal série
 .\build.ps1 -Monitor 70         # journal série seul (la carte est redémarrée)
+.\build.ps1 -Env wifi -Flash    # second firmware : transfert de fichiers par WiFi
 ```
 
 ESP-IDF refuse les chemins contenant des espaces : le script recopie donc
@@ -239,6 +315,9 @@ app_main (main.cpp)
 | `src/core/A2Disk.cpp` | Carte Disk II : moteur pas à pas, conversion d'une piste en nibbles et retour, reconnaissance des formats d'image |
 | `src/core/A2Hdd.cpp` | Disque dur ProDOS : firmware de la carte (écrit pour ce projet), commandes par blocs |
 | `src/core/A2Mockingboard.cpp` | Mockingboard : 6522 (compteurs, interruptions) et AY-3-8910 |
+| `src/core/A2IIc.cpp` | Ce que le //c a en propre : souris en quadrature, interruption de retour vertical, ports série |
+| `src/core/A2Mouse.cpp` | Carte souris : PIA 6821 et dialogue avec son microcontrôleur, porté d'AppleWin |
+| `src/WifiApp.cpp` | Second firmware (environnement `wifi`, partition ota_1) : serveur web qui donne accès à la carte SD, repris de CPC_ProjectESP32 |
 | `src/Emu.cpp` | Initialisation, boucle principale, tâche audio |
 | `src/Video.cpp` | Sortie VGA : palette, lignes de balayage, texte par-dessus l'image, capture |
 | `src/A2Keyboard.cpp` | Clavier PS/2 : dispositions AZERTY et QWERTY, boutons, manette au clavier |
@@ -263,8 +342,10 @@ Choix d'émulation à connaître :
   rempli), pas une simulation du signal NTSC.
 - **Disquette** : un octet se présente tous les 32 cycles, comme sur un vrai
   lecteur, mais le disque attend le programme : un octet non lu n'est jamais
-  perdu. Les écritures sont décodées et reportées dans l'image quand la tête
-  change de piste ou que le moteur s'arrête.
+  perdu. Un secteur écrit est décodé et reporté dans l'image dès la fin de son
+  écriture ; seuls les secteurs qui ont changé sont écrits. Le flux de bits
+  d'une image `.woz` est converti en octets au chargement de la piste, quart de
+  piste par quart de piste.
 - **Mémoire** : la RAM principale est en mémoire interne, la RAM auxiliaire du
   //e et les images de disquette en PSRAM. L'image du disque dur reste sur la
   carte SD, lue bloc par bloc.

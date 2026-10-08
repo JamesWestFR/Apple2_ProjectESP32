@@ -98,11 +98,12 @@ bool insert(int drive, const string& path) {
     A2::Disk::Format fmt;
     int tracks;
     uint32_t dataOffset;
-    const char* error = A2::Disk::identify(FileUtils::getLCaseExt(path).c_str(), size, head, headLen,
-                                           &fmt, &tracks, &dataOffset);
+    A2::Disk::IdentifyResult result = A2::Disk::identify(FileUtils::getLCaseExt(path).c_str(), size, head, headLen,
+                                                         &fmt, &tracks, &dataOffset);
     free(head);
-    if (error) {
-        lastError = error;
+    if (result != A2::Disk::ID_OK) {
+        lastError = result == A2::Disk::ID_BAD_2MG ? T("En-tete 2MG invalide", "Bad 2MG header")
+                                                   : T("Taille d'image non reconnue", "Unknown image size");
         fclose(s.file);
         return false;
     }

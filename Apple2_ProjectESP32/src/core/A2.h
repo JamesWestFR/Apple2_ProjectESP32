@@ -33,6 +33,7 @@ enum Model : uint8_t {
     MODEL_IIPLUS,     // Apple ][+ : Applesoft, Autostart, carte langage 16 Ko
     MODEL_IIE,        // Apple //e : 6502, 128 Ko avec la carte 80 colonnes étendue
     MODEL_IIE_ENH,    // Apple //e Enhanced : 65C02, MouseText
+    MODEL_IIC,        // Apple //c (ROM 255) : un //e Enhanced sans slots, lecteur intégré
     MODEL_COUNT
 };
 
@@ -146,6 +147,10 @@ extern bool renderEnabled;
 // exemple) : le rendu produit alors directement le format de la plateforme
 void setPixelMap(const uint8_t* map16);
 extern bool monochrome;                  // rendu sans couleurs d'artefact (moniteur mono)
+// Jeu de caractères du //e et du //c : 0 américain, 1 français (à, é, è, ç, ù... à la
+// place de @ { } \\ | etc.)
+void setCharset(uint8_t charset);
+extern bool dhiresMono;                  // double haute résolution toujours sans couleurs (texte fin lisible)
 // Rend la ligne si ce qu'elle montre a changé depuis son dernier rendu ; rend
 // faux, sans toucher à `out`, si elle est restée la même
 bool renderLine(int y, uint8_t* out);
@@ -163,6 +168,25 @@ void textScreenLine(int row, bool col80, char* out);
 // Couleurs Apple en RGB 8 bits (ordre des couleurs basse résolution)
 extern const uint8_t paletteRGB[16][3];
 
+// --- Sauvegarde d'état ---------------------------------------------------------
+
+// Tout l'état de la machine (6502, mémoire, soft switches, lecteurs, carte
+// son) passe par une fonction de lecture ou d'écriture fournie par la
+// plateforme. Le contenu des disquettes n'en fait pas partie.
+struct StateIO {
+    bool saving;
+    bool ok;
+    bool (*rw)(void* ctx, void* data, uint32_t len);
+    void* ctx;
+    void bytes(void* data, uint32_t len) { if (ok) ok = rw(ctx, data, len); }
+    template <typename V> void value(V& v) { bytes(&v, sizeof(V)); }
+};
+
+bool saveState(bool (*write)(void* ctx, void* data, uint32_t len), void* ctx);
+// Faux si le fichier n'est pas une sauvegarde ; l'Apple est alors redémarré
+// s'il avait commencé à être modifié.
+bool loadState(bool (*read)(void* ctx, void* data, uint32_t len), void* ctx);
+
 // --- Haut-parleur ------------------------------------------------------------
 
 // À appeler après runFrame : produit `count` échantillons non signés 8 bits pour
@@ -174,7 +198,8 @@ void renderAudio(uint8_t* out, int count, int volume);
 namespace Disk {
 
 // FMT_HDD : image trop grande pour une disquette 5,25 pouces, à monter comme disque dur (Hdd)
-enum Format : uint8_t { FMT_NONE = 0, FMT_DOS, FMT_PRODOS, FMT_NIB, FMT_HDD };
+// FMT_WOZ : flux de bits d'une disquette d'origine, en lecture seule
+enum Format : uint8_t { FMT_NONE = 0, FMT_DOS, FMT_PRODOS, FMT_NIB, FMT_HDD, FMT_WOZ };
 
 #define A2_NIB_TRACK_SIZE 6656
 
@@ -183,13 +208,15 @@ void init();
 // taille et son début (`head`, au moins 2 Ko si le fichier les a). Rend nullptr
 // si l'image est utilisable, sinon la raison du refus. Pour FMT_HDD, `tracks`
 // reçoit le nombre de blocs de 512 octets.
-const char* identify(const char* ext, uint32_t fileSize, const uint8_t* head, uint32_t headLen,
-                     Format* fmt, int* tracks, uint32_t* dataOffset);
+enum IdentifyResult : uint8_t { ID_OK = 0, ID_BAD_2MG, ID_BAD_SIZE };
+IdentifyResult identify(const char* ext, uint32_t fileSize, const uint8_t* head, uint32_t headLen,
+                        Format* fmt, int* tracks, uint32_t* dataOffset);
 void insert(int drive, Format fmt, int tracks, uint32_t dataOffset, bool writeProtected);
 void eject(int drive);
 bool spinning();
 bool busy();               // le lecteur tourne et contient une disquette
 void reset();              // signal RESET de l'Apple
+void setIwm(bool on);      // le lecteur est celui du //c (contrôleur IWM) et non une carte Disk II
 int quarterTrack(int drive);   // position de la tête, en quarts de piste
 void flush();              // écrit la piste modifiée dans l'image
 void frameTick();
@@ -211,6 +238,23 @@ void write(uint16_t addr, uint8_t value);
 void reset();
 void frameBegin();
 bool render(int32_t* mix, int count);
+
+}
+
+// --- Carte souris (slot 2) ---------------------------------------------------
+
+namespace Mouse {
+
+extern bool enabled;
+void setEnabled(bool on);            // présence de la carte dans le slot 2
+// Déplacement (y vers le bas) et boutons : ils vont à la carte souris, ou à la
+// souris intégrée quand la machine est un //c
+void move(int dx, int dy);
+void setButton(int n, bool down);
+void reset();
+void vbl();                          // début du retour vertical
+uint8_t read(uint8_t reg);
+void write(uint8_t reg, uint8_t value);
 
 }
 
@@ -242,6 +286,8 @@ void A2_platformLine(int y, const uint8_t* pixels);
 bool A2_platformDiskRead(int drive, uint32_t offset, uint8_t* buf, uint32_t len);
 bool A2_platformDiskWrite(int drive, uint32_t offset, const uint8_t* buf, uint32_t len);
 
+// Octet émis par un port série du //c (0 : port 1, l'imprimante ; 1 : port 2, le modem)
+void A2_platformSerialOut(int port, uint8_t value);
 // Blocs de 512 octets de l'image de disque dur
 bool A2_platformHddRead(uint32_t block, uint8_t* buf);
 bool A2_platformHddWrite(uint32_t block, const uint8_t* buf);

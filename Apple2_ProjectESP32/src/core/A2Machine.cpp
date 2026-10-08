@@ -32,7 +32,8 @@ bool renderEnabled = true;
 static uint8_t* mainRam = nullptr;
 static uint8_t* auxRam = nullptr;
 static Model curModel = MODEL_IIE_ENH;
-static bool iie = true;
+static bool iie = true;              // //e, //e Enhanced ou //c
+static bool iic = false;             // //c : pas de slots, tout $C100-$CFFF est sa ROM
 static const uint8_t* rom = gb_rom_apple2e_enh;   // //e : $C000-$FFFF ; ][ et ][+ : $D000-$FFFF
 static uint8_t sink[256];                         // reçoit les écritures en ROM
 
@@ -58,7 +59,7 @@ uint8_t* ramMain() { return mainRam; }
 uint8_t* ramAux() { return auxRam; }
 
 const char* modelName(Model m) {
-    static const char* names[MODEL_COUNT] = { "Apple ][", "Apple ][+", "Apple //e", "Apple //e Enhanced" };
+    static const char* names[MODEL_COUNT] = { "Apple ][", "Apple ][+", "Apple //e", "Apple //e Enhanced", "Apple //c" };
     return m < MODEL_COUNT ? names[m] : "?";
 }
 
@@ -107,14 +108,15 @@ static void pageZpAndLc() {
 static void pageSlots() {
     for (int page = 0xC1; page <= 0xCE; page++) {
         const uint8_t* direct = nullptr;
-        if (iie && (sw & SW_INTCXROM)) direct = rom + ((page - 0xC0) << 8);
+        if (iic || (iie && (sw & SW_INTCXROM))) direct = rom + ((page - 0xC0) << 8);
         else if (page == 0xC6) direct = gb_rom_disk2;
         else if (page == 0xC7) direct = Hdd::romPage();
+        else if (page == 0xC2) direct = Mouse::romPage();
         else if (iie && page >= 0xC8 && (sw & SW_INTC8ROM)) direct = rom + ((page - 0xC0) << 8);
         rdPage[page] = (uint8_t*)direct;
         // Une écriture en ROM est sans effet ; les registres de la Mockingboard
         // ($C400) passent par ioWrite
-        bool internalRom = iie && (sw & SW_INTCXROM);
+        bool internalRom = iic || (iie && (sw & SW_INTCXROM));
         wrPage[page] = (page == 0xC4 && Mockingboard::enabled && !internalRom) ? nullptr : sink;
     }
 }
@@ -127,6 +129,8 @@ static void pageAll() {
     rdPage[0xC0] = wrPage[0xC0] = nullptr;
     rdPage[0xCF] = wrPage[0xCF] = nullptr;
     pageSlots();
+    // //c : $CF00-$CFFF est de la ROM comme le reste, sans le rôle de $CFFF
+    if (iic) rdPage[0xCF] = (uint8_t*)rom + 0x0F00;
 }
 
 // Pages vidéo seules : PAGE2 et HIRES ne déplacent qu'elles
@@ -181,6 +185,8 @@ static void memorySwitch(uint8_t reg) {
     static const uint32_t flag[8] = { SW_80STORE, SW_RAMRD, SW_RAMWRT, SW_INTCXROM,
                                       SW_ALTZP, SW_SLOTC3ROM, SW_80COL, SW_ALTCHAR };
     uint32_t f = flag[(reg >> 1) & 7];
+    // //c : pas de slots, donc pas de choix entre ROM interne et ROM de carte
+    if (iic && (f == SW_INTCXROM || f == SW_SLOTC3ROM)) return;
     uint32_t old = sw;
     if (reg & 1) sw |= f; else sw &= ~f;
     if (old == sw) return;
@@ -201,6 +207,7 @@ static inline void speakerToggle() {
 // $C100-$CFFF : ROM des cartes et ROM interne du //e
 static uint8_t slotRead(uint16_t addr) {
     uint8_t page = addr >> 8;
+    if (iic) return rom[addr - 0xC000];
     // Les pages des cartes présentes ($C6, $C7) sont lues directement (pageSlots)
     if (!iie) return (page == 0xC4 && Mockingboard::enabled) ? Mockingboard::read(addr) : videoFloatingBus();
 
@@ -232,6 +239,11 @@ static uint8_t slotRead(uint16_t addr) {
 uint8_t ioRead(uint16_t addr) {
     if (addr >= 0xC100) return slotRead(addr);
     uint8_t reg = addr & 0xFF;
+    if (iic) {
+        // Ce que le //c a en propre : souris, retour vertical, ports série
+        int v = IIc::read(reg, keyLatch & 0x7F);
+        if (v >= 0) return (uint8_t)v;
+    }
     switch (reg >> 4) {
         case 0x0:
             return keyLatch;
@@ -288,10 +300,12 @@ uint8_t ioRead(uint16_t addr) {
         case 0x8:
             lcSwitch(reg, false);
             return videoFloatingBus();
+        case 0xA:
+            return (Mouse::enabled && !iic) ? Mouse::read(reg) : videoFloatingBus();
         case 0xE:
             return Disk::access(reg & 0x0F, false, 0);
         case 0xF:
-            return Hdd::ioRead(reg & 0x0F);
+            return iic ? videoFloatingBus() : Hdd::ioRead(reg & 0x0F);
         default:
             return videoFloatingBus();
     }
@@ -299,7 +313,7 @@ uint8_t ioRead(uint16_t addr) {
 
 void ioWrite(uint16_t addr, uint8_t value) {
     if (addr >= 0xC100) {
-        if ((addr >> 8) == 0xC4 && Mockingboard::enabled) Mockingboard::write(addr, value);
+        if ((addr >> 8) == 0xC4 && Mockingboard::enabled && !iic) Mockingboard::write(addr, value);
         if (iie && addr == 0xCFFF && (sw & SW_INTC8ROM)) {
             sw &= ~SW_INTC8ROM;
             pageSlots();
@@ -307,6 +321,7 @@ void ioWrite(uint16_t addr, uint8_t value) {
         return;
     }
     uint8_t reg = addr & 0xFF;
+    if (iic && IIc::write(reg, value)) return;
     switch (reg >> 4) {
         case 0x0: if (iie) memorySwitch(reg); break;
         case 0x1: keyLatch &= 0x7F; break;
@@ -314,8 +329,9 @@ void ioWrite(uint16_t addr, uint8_t value) {
         case 0x5: displaySwitch(reg); break;
         case 0x7: paddleStart = cycles; break;
         case 0x8: lcSwitch(reg, true); break;
+        case 0xA: if (Mouse::enabled && !iic) Mouse::write(reg, value); break;
         case 0xE: Disk::access(reg & 0x0F, true, value); break;
-        case 0xF: Hdd::ioWrite(reg & 0x0F, value); break;
+        case 0xF: if (!iic) Hdd::ioWrite(reg & 0x0F, value); break;
         default: break;
     }
 }
@@ -375,12 +391,15 @@ void init(uint8_t* main64k, uint8_t* aux64k) {
 
 void setModel(Model m) {
     curModel = m;
-    iie = (m == MODEL_IIE || m == MODEL_IIE_ENH);
-    cpu.cmos = (m == MODEL_IIE_ENH);
+    iie = (m == MODEL_IIE || m == MODEL_IIE_ENH || m == MODEL_IIC);
+    iic = (m == MODEL_IIC);
+    cpu.cmos = (m == MODEL_IIE_ENH || m == MODEL_IIC);
+    Disk::setIwm(iic);
     switch (m) {
         case MODEL_II:      rom = gb_rom_apple2; break;
         case MODEL_IIPLUS:  rom = gb_rom_apple2plus; break;
         case MODEL_IIE:     rom = gb_rom_apple2e; break;
+        case MODEL_IIC:     rom = gb_rom_apple2c; break;
         default:            rom = gb_rom_apple2e_enh; break;
     }
     videoSetModel();
@@ -391,10 +410,12 @@ void reset() {
     // Le //e remet ses bascules mémoire à zéro ; la carte langage revient en
     // lecture ROM, écriture autorisée, banque 2
     sw = SW_TEXT | SW_LCBANK2 | SW_LCWRITE;
+    IIc::reset();
     anyKeyDown = false;
     pageAll();
     Disk::reset();
     Mockingboard::reset();
+    Mouse::reset();
     cpuReset();
 }
 
@@ -422,6 +443,11 @@ void runFrame() {
     alignas(4) static uint8_t lineBuf[A2_LINE_PIXELS + 4];
     for (scanline = 0; scanline < A2_LINES_PER_FRAME; scanline++) {
         lineStartCycles = cycles;
+        if (iic) IIc::scanlineTick();
+        if (scanline == A2_VISIBLE_LINES) {
+            if (iic) IIc::vbl();
+            else Mouse::vbl();
+        }
         cpuRun(A2_CYCLES_PER_LINE);
         if (scanline < A2_VISIBLE_LINES && renderEnabled && renderLine(scanline, lineBuf))
             A2_platformLine(scanline, lineBuf);
@@ -429,6 +455,55 @@ void runFrame() {
     frameCount++;
     Disk::frameTick();
     Hdd::frameTick();
+}
+
+// ---------------------------------------------------------------------------
+// Sauvegarde d'état
+// ---------------------------------------------------------------------------
+
+static const char stateMagic[4] = { 'A', '2', 'S', '3' };
+
+static void machineState(StateIO& io) {
+    cpuState(io);
+    io.value(sw); io.value(keyLatch); io.value(anyKeyDown); io.value(paddleStart);
+    io.value(spkLevel); io.value(frameCount);
+    io.bytes(mainRam, 0x10000);
+    if (auxRam) io.bytes(auxRam, 0x10000);
+    Disk::state(io);
+    Mockingboard::state(io);
+    Mouse::state(io);
+    IIc::state(io);
+}
+
+bool saveState(bool (*write)(void* ctx, void* data, uint32_t len), void* ctx) {
+    StateIO io = { true, true, write, ctx };
+    char magic[4];
+    memcpy(magic, stateMagic, 4);
+    uint8_t m = curModel, aux = auxRam ? 1 : 0;
+    io.bytes(magic, 4); io.value(m); io.value(aux);
+    machineState(io);
+    return io.ok;
+}
+
+bool loadState(bool (*read)(void* ctx, void* data, uint32_t len), void* ctx) {
+    StateIO io = { false, true, read, ctx };
+    char magic[4];
+    uint8_t m = 0, aux = 0;
+    io.bytes(magic, 4); io.value(m); io.value(aux);
+    // Une sauvegarde faite avec ou sans mémoire auxiliaire ne se reprend que de même
+    if (!io.ok || memcmp(magic, stateMagic, 4) != 0 || m >= MODEL_COUNT || aux != (auxRam ? 1 : 0)) return false;
+    if (m != curModel) setModel((Model)m);
+    machineState(io);
+    if (!io.ok) {
+        // Fichier tronqué : la mémoire est à moitié remplacée
+        powerOn();
+        return false;
+    }
+    pageAll();
+    videoInvalidate();
+    spkFrameLevel = spkLevel;
+    spkCount = 0;
+    return true;
 }
 
 // Position du balayage dans la ligne en cours, en cycles (0 à 64)

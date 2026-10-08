@@ -16,7 +16,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 using namespace std;
 
-#define DISK_EXTENSIONS "dsk,do,po,nib,2mg,hdv"
+#define DISK_EXTENSIONS "dsk,do,po,nib,woz,2mg,hdv"
 
 namespace DiskImage {
 

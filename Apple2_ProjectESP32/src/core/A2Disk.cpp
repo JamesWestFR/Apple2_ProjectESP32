@@ -22,6 +22,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 */
 
+#include <stdlib.h>
 #include <string.h>
 #include "A2Internal.h"
 
@@ -48,10 +49,15 @@ static uint32_t motorOffCycles = 0;
 static bool q6 = false, q7 = false;
 static uint8_t latch = 0;
 static uint32_t nibbleCycles = 0;   // instant où le dernier octet lu s'est présenté
+// Contrôleur IWM du //c : compatible avec la carte Disk II, plus un registre de
+// mode que sa ROM écrit puis relit dans le registre d'état
+static bool iwm = false;
+static uint8_t iwmMode = 0;
 #define NIBBLE_CYCLES 32
 
 // Piste sous la tête
 static uint8_t trackBuf[A2_NIB_TRACK_SIZE];
+static int restorePos = -1;         // position à reprendre après une restauration d'état
 static int trackLen = 0;
 static int trackPos = 0;
 static int trackDrive = -1, trackNum = -1;
@@ -107,16 +113,25 @@ void init() {
     trackDirty = false;
 }
 
-const char* identify(const char* ext, uint32_t fileSize, const uint8_t* head, uint32_t headLen,
-                     Format* fmt, int* tracks, uint32_t* dataOffset) {
+IdentifyResult identify(const char* ext, uint32_t fileSize, const uint8_t* head, uint32_t headLen,
+                        Format* fmt, int* tracks, uint32_t* dataOffset) {
     uint32_t size = fileSize, offset = 0;
     Format f = FMT_DOS;
+    if (headLen >= 256 && (memcmp(head, "WOZ1", 4) == 0 || memcmp(head, "WOZ2", 4) == 0)) {
+        // WOZ : `dataOffset` porte la version du format (1 ou 2), `tracks` les
+        // 160 quarts de piste de sa table
+        if (head[21] != 1) return ID_BAD_SIZE;      // disquette 3,5 pouces
+        *fmt = FMT_WOZ;
+        *tracks = 160;
+        *dataOffset = head[3] - '0';
+        return ID_OK;
+    }
     if (headLen >= 64 && memcmp(head, "2IMG", 4) == 0) {
         // 2MG : en-tête de 64 octets, format et position des données
         uint32_t imgFormat = head[12] | (head[13] << 8);
         offset = head[24] | (head[25] << 8) | (head[26] << 16) | ((uint32_t)head[27] << 24);
         uint32_t length = head[28] | (head[29] << 8) | (head[30] << 16) | ((uint32_t)head[31] << 24);
-        if (offset < 64 || offset >= fileSize) return "En-tete 2MG invalide";
+        if (offset < 64 || offset >= fileSize) return ID_BAD_2MG;
         size = (length && offset + length <= fileSize) ? length : fileSize - offset;
         f = imgFormat == 0 ? FMT_DOS : imgFormat == 1 ? FMT_PRODOS : FMT_NIB;
     } else if (strcmp(ext, "po") == 0) {
@@ -132,19 +147,19 @@ const char* identify(const char* ext, uint32_t fileSize, const uint8_t* head, ui
     }
     if (f != FMT_NIB && size >= 400 * 1024) {
         // Trop grand pour une disquette 5,25 pouces : un volume ProDOS par blocs
-        if (size % 512 || size / 512 > 65535) return "Taille d'image non reconnue";
+        if (size % 512 || size / 512 > 65535) return ID_BAD_SIZE;
         *fmt = FMT_HDD;
         *tracks = (int)(size / 512);
         *dataOffset = offset;
-        return nullptr;
+        return ID_OK;
     }
     uint32_t trackSize = f == FMT_NIB ? A2_NIB_TRACK_SIZE : TRACK_BYTES;
     uint32_t count = size / trackSize;
-    if (count < 34 || count > 40 || size % trackSize) return "Taille d'image non reconnue";
+    if (count < 34 || count > 40 || size % trackSize) return ID_BAD_SIZE;
     *fmt = f;
     *tracks = (int)count;
     *dataOffset = offset;
-    return nullptr;
+    return ID_OK;
 }
 
 int quarterTrack(int drive) { return drives[drive & 1].quarterTrack; }
@@ -156,6 +171,11 @@ bool spinning() {
         motorStopping = false;
     }
     return false;
+}
+
+void setIwm(bool on) {
+    iwm = on;
+    iwmMode = 0;
 }
 
 bool busy() { return spinning() && drives[cur].fmt != FMT_NONE; }
@@ -216,6 +236,55 @@ static bool decodeSector(const uint8_t* nib, int pos, uint8_t* dst) {
     return true;
 }
 
+// Image WOZ : la piste est un flux de bits tel que la tête le lit. Il est
+// converti en octets comme le fait la carte Disk II : les bits entrent dans un
+// registre à décalage, et un octet est complet quand son bit de poids fort
+// vaut 1 (les zéros en trop des octets de synchronisation disparaissent
+// d'eux-mêmes). Les quarts de piste de l'image sont respectés ; les
+// protections qui mesurent des durées ne le sont pas.
+static void loadWozTrack(int drive, int quarter) {
+    Drive& d = drives[drive];
+    trackLen = 6400;
+    memset(trackBuf, 0xFF, trackLen);       // piste absente : rien de lisible
+    uint8_t index = 0xFF;
+    if (quarter >= 160 || !A2_platformDiskRead(drive, 88 + quarter, &index, 1) || index == 0xFF) return;
+
+    uint32_t start, bits;
+    uint8_t t[8];
+    if (d.dataOffset == 2) {
+        if (!A2_platformDiskRead(drive, 256 + 8 * (uint32_t)index, t, 8)) return;
+        start = (uint32_t)(t[0] | (t[1] << 8)) * 512;
+        bits = t[4] | (t[5] << 8) | (t[6] << 16) | ((uint32_t)t[7] << 24);
+    } else {
+        start = 256 + (uint32_t)index * 6656;
+        if (!A2_platformDiskRead(drive, start + 6646, t, 4)) return;
+        bits = t[2] | (t[3] << 8);
+    }
+    uint32_t bytes = (bits + 7) / 8;
+    if (bits < 64 || bytes > 2 * A2_NIB_TRACK_SIZE) return;
+    uint8_t* raw = (uint8_t*)malloc(bytes);
+    if (!raw) return;
+    if (A2_platformDiskRead(drive, start, raw, bytes)) {
+        uint8_t reg = 0;
+        int n = 0;
+        // Un premier passage sur la fin de la piste cale le registre : la piste est un anneau
+        for (uint32_t i = bits - 64; i < bits; i++) {
+            reg = (uint8_t)((reg << 1) | ((raw[i >> 3] >> (7 - (i & 7))) & 1));
+            if (reg & 0x80) reg = 0;
+        }
+        for (uint32_t i = 0; i < bits && n < A2_NIB_TRACK_SIZE; i++) {
+            reg = (uint8_t)((reg << 1) | ((raw[i >> 3] >> (7 - (i & 7))) & 1));
+            if (reg & 0x80) {
+                trackBuf[n++] = reg;
+                reg = 0;
+            }
+        }
+        if (n > 0) trackLen = n;
+        statReads++;
+    }
+    free(raw);
+}
+
 static void loadTrack(int drive, int track) {
     Drive& d = drives[drive];
     trackDrive = drive;
@@ -224,6 +293,11 @@ static void loadTrack(int drive, int track) {
     trackPos = 0;
     trackLen = 0;
     if (d.fmt == FMT_NONE) return;
+
+    if (d.fmt == FMT_WOZ) {
+        loadWozTrack(drive, track);
+        return;
+    }
 
     if (d.fmt == FMT_NIB) {
         trackLen = A2_NIB_TRACK_SIZE;
@@ -266,6 +340,22 @@ static void loadTrack(int drive, int track) {
     statReads++;
 }
 
+void state(StateIO& io) {
+    if (io.saving) flush();
+    for (int d = 0; d < 2; d++) io.value(drives[d].quarterTrack);
+    io.value(cur); io.value(phases); io.value(motorOn); io.value(motorStopping); io.value(motorOffCycles);
+    io.value(q6); io.value(q7); io.value(latch); io.value(nibbleCycles);
+    int pos = trackPos;
+    io.value(pos);
+    if (!io.saving) {
+        // La piste sera reconvertie à la prochaine lecture, à la même position
+        trackDrive = trackNum = -1;
+        trackLen = 0;
+        trackDirty = false;
+        restorePos = pos;
+    }
+}
+
 // Relit dans le tampon de piste les secteurs qu'un programme vient d'écrire
 static void storeTrack() {
     Drive& d = drives[trackDrive];
@@ -287,7 +377,10 @@ static void storeTrack() {
             if (decodeSector(trackBuf, (j + 3) % trackLen, sector)) {
                 uint32_t offset = d.dataOffset + (uint32_t)trackNum * TRACK_BYTES
                                 + (uint32_t)fileSector(d.fmt, phys) * SECTOR_SIZE;
-                A2_platformDiskWrite(trackDrive, offset, sector, SECTOR_SIZE);
+                // Seuls les secteurs qui ont changé sont écrits dans l'image
+                uint8_t old[SECTOR_SIZE];
+                if (!A2_platformDiskRead(trackDrive, offset, old, SECTOR_SIZE) || memcmp(old, sector, SECTOR_SIZE) != 0)
+                    A2_platformDiskWrite(trackDrive, offset, sector, SECTOR_SIZE);
                 done |= 1 << phys;
             }
             break;
@@ -306,10 +399,15 @@ void flush() {
 }
 
 static inline void ensureTrack() {
-    int track = drives[cur].quarterTrack >> 2;
+    // Une image WOZ décrit chaque quart de piste ; les autres, les pistes entières
+    int track = drives[cur].fmt == FMT_WOZ ? drives[cur].quarterTrack : drives[cur].quarterTrack >> 2;
     if (trackDrive != cur || trackNum != track) {
         flush();
         loadTrack(cur, track);
+        if (restorePos >= 0) {
+            if (restorePos < trackLen) trackPos = restorePos;
+            restorePos = -1;
+        }
     }
 }
 
@@ -322,7 +420,7 @@ void insert(int drive, Format fmt, int tracks, uint32_t dataOffset, bool writePr
     drives[drive].fmt = fmt;
     drives[drive].tracks = (uint8_t)tracks;
     drives[drive].dataOffset = dataOffset;
-    drives[drive].writeProtected = writeProtected;
+    drives[drive].writeProtected = writeProtected || fmt == FMT_WOZ;
 }
 
 void eject(int drive) {
@@ -402,13 +500,22 @@ uint8_t access(uint8_t reg, bool isWrite, uint8_t value) {
             if (isWrite) latch = value;
             break;
         case 0xE:
+            // Fin d'une écriture : le secteur part aussitôt dans l'image, sans
+            // attendre l'arrêt du moteur (une coupure de courant ne le perd plus)
+            if (q7 && trackDirty) flush();
             q7 = false;
             // Q6 haut, Q7 bas : lecture de la protection en écriture
             if (q6) latch = (drives[cur].fmt != FMT_NONE && drives[cur].writeProtected) ? 0xFF : 0x00;
+            // IWM : registre d'état (protection, moteur, mode)
+            if (q6 && iwm) latch = (latch & 0x80) | (motorOn ? 0x20 : 0) | iwmMode;
             break;
         case 0xF:
             q7 = true;
-            if (isWrite) latch = value;
+            if (isWrite) {
+                latch = value;
+                // IWM : moteur arrêté, Q6 et Q7 hauts, l'écriture va au registre de mode
+                if (iwm && q6 && !motorOn) iwmMode = value & 0x1F;
+            }
             break;
         default:
             step(reg);
