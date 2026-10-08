@@ -21,11 +21,13 @@ dans l'ordre :
   mousecard=0|1    carte souris en slot 2 ; mouse=DX,DY : déplacement ; mbutton=0|1 : bouton
   serial           affiche ce que le port imprimante du //c a émis
   mono=0|1         rendu monochrome ; dhgrmono=0|1 : double haute résolution sans couleurs
+  fringes=0|1      haute résolution : points isolés en couleur (1) ou blancs (0, par défaut)
   savestate=FICHIER, loadstate=FICHIER   sauvegarde et reprise de l'état de la machine
   wav=FICHIER      enregistre le son des images suivantes (fermé en fin de programme)
   save1=FICHIER    écrit l'image de la disquette 1 telle qu'elle est en mémoire
   savehdd=FICHIER  écrit l'image du disque dur (ou de la disquette 3,5 pouces) telle qu'elle est en mémoire
   state            affiche le 6502 et les soft switches
+  until=ADR        émule jusqu'à ce que le 6502 arrive à l'adresse (hexadécimal), puis affiche son état
   mem=ADR,N        affiche N octets de mémoire (hexadécimal)
   bench=N          émule N images et donne la vitesse
   cputest=FICHIER,DEBUT,FIN[,c]   test de Klaus Dormann (c : 65C02)
@@ -366,6 +368,7 @@ int main(int argc, char** argv) {
         }
         else if (key == "mono") A2::monochrome = atoi(val.c_str()) != 0;
         else if (key == "dhgrmono") A2::dhiresMono = atoi(val.c_str()) != 0;
+        else if (key == "fringes") A2::setHiresFringes(atoi(val.c_str()) != 0);
         else if (key == "savestate" || key == "loadstate") {
             bool saving = key == "savestate";
             FILE* f = fopen(val.c_str(), saving ? "wb" : "rb");
@@ -377,6 +380,13 @@ int main(int argc, char** argv) {
             printf("[%s] %s %s\n", ok ? "+" : "!", key.c_str(), val.c_str());
         }
         else if (key == "state") printState();
+        else if (key == "until") {
+            // Instruction par instruction jusqu'à l'adresse, 50 millions de cycles au plus
+            uint16_t target = (uint16_t)strtol(val.c_str(), nullptr, 16);
+            uint32_t start = A2::cycles;
+            while (A2::cpu.pc != target && A2::cycles - start < 50000000u) A2::cpuRun(1);
+            printState();
+        }
         else if (key == "mem") {
             int addr = (int)strtol(val.c_str(), nullptr, 16);
             size_t comma = val.find(',');

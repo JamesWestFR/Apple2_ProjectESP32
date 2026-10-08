@@ -33,6 +33,7 @@ public:
     static uint8_t monitor;      // MONITOR_*
     static uint8_t scanlines;    // une ligne VGA sur deux en noir
     static uint8_t dhgrMono;     // double haute résolution sans couleurs
+    static uint8_t fringes;      // haute résolution : points isolés en couleur, comme sur un vrai moniteur
     static uint8_t charset;      // caractères du //e et du //c : 0 américains, 1 français
     static uint8_t fastDisk;     // émulation accélérée tant que le lecteur tourne
     static uint8_t volume;       // 0 à 8

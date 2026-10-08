@@ -369,8 +369,14 @@ void loop() {
             // rendu ni son, tant qu'elles tiennent avant le prochain retour vertical
             if (turbo || (Config::fastDisk && A2::Disk::busy())) {
                 A2::renderEnabled = false;
-                while (esp_timer_get_time() - t0 + cpu < MICROS_PER_FRAME - 1500) {
+                // Une image de plus si la précédente, à son coût réel (la lecture
+                // d'une disquette pèse plus qu'une image ordinaire), tient encore
+                int64_t last = cpu;
+                for (;;) {
+                    int64_t before = esp_timer_get_time();
+                    if (before - t0 + last >= MICROS_PER_FRAME - 1500) break;
                     A2::runFrame();
+                    last = esp_timer_get_time() - before;
                     statEmulated++;
                     if (!turbo && !A2::Disk::busy()) break;
                 }

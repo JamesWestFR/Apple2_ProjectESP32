@@ -25,6 +25,7 @@ uint8_t Config::joystick = 0;
 uint8_t Config::monitor = MONITOR_COLOR;
 uint8_t Config::scanlines = 0;
 uint8_t Config::dhgrMono = 0;
+uint8_t Config::fringes = 0;
 uint8_t Config::charset = 0;
 uint8_t Config::fastDisk = 1;
 uint8_t Config::volume = 4;
@@ -125,6 +126,7 @@ void Config::load() {
     nvs_get_u8(h, "monitor", &monitor);
     nvs_get_u8(h, "scanlines", &scanlines);
     nvs_get_u8(h, "dhgrmono", &dhgrMono);
+    nvs_get_u8(h, "fringes", &fringes);
     nvs_get_u8(h, "charset", &charset);
     nvs_get_u8(h, "fastdisk", &fastDisk);
     nvs_get_u8(h, "volume", &volume);
@@ -179,6 +181,7 @@ void Config::save() {
     nvs_set_u8(h, "monitor", gMonitor);
     nvs_set_u8(h, "scanlines", scanlines);
     nvs_set_u8(h, "dhgrmono", gDhgrMono);
+    nvs_set_u8(h, "fringes", fringes);
     nvs_set_u8(h, "pergame", perGame);
     nvs_set_u8(h, "charset", charset);
     nvs_set_u8(h, "fastdisk", fastDisk);

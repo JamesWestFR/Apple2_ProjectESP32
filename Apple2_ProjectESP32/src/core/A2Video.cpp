@@ -26,6 +26,7 @@ namespace A2 {
 
 bool monochrome = false;
 bool dhiresMono = false;
+bool hiresFringes = false;
 
 // Couleurs Apple, dans l'ordre de la basse résolution
 const uint8_t paletteRGB[16][3] = {
@@ -56,7 +57,7 @@ enum : uint8_t { BLACK = 0, VIOLET = 3, BLUE = 6, ORANGE = 9, GREEN = 12, WHITE 
 static uint8_t pix[16] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 };
 static uint16_t pixBlack2 = 0, pixWhite2 = 0x0F0F;      // deux points de la même couleur
 static uint32_t dhiresWord[16];                         // quatre points de la couleur d'un groupe de 4 bits
-static uint8_t hiresPix[2][2][8];
+static uint8_t hiresPix[2][2][512];
 
 // Haute résolution. Pour chaque point, selon ses deux voisins :
 //   allumé, un voisin allumé     -> blanc
@@ -65,6 +66,13 @@ static uint8_t hiresPix[2][2][8];
 //   éteint entre deux allumés    -> la couleur de ses voisins (aplat de couleur)
 //   sinon                        -> noir
 // Index : [bit 7][colonne impaire][voisin gauche | point << 1 | voisin droit << 2]
+//
+// Cette règle colore tout point isolé, comme un vrai moniteur couleur : le
+// texte dessiné en haute résolution (l'introduction de Karateka) se couvre de
+// points de couleur à chaque bout de trait. Un tube les fond dans le blanc ;
+// un écran VGA les montre un par un. Sans `hiresFringes`, la couleur est
+// donc réservée aux aplats : une suite d'au moins trois points allumés un
+// sur deux. Un point isolé, ou une paire isolée, est rendu en blanc.
 static const uint8_t hiresColor[2][2][8] = {
     { { BLACK, BLACK, VIOLET, WHITE, BLACK, GREEN, WHITE, WHITE },
       { BLACK, BLACK, GREEN, WHITE, BLACK, VIOLET, WHITE, WHITE } },
@@ -82,7 +90,32 @@ static void buildPixelTables() {
     }
     for (int hi = 0; hi < 2; hi++)
         for (int odd = 0; odd < 2; odd++)
-            for (int w = 0; w < 8; w++) hiresPix[hi][odd][w] = pix[hiresColor[hi][odd][w]];
+            // Fenêtre de 9 points : quatre voisins de chaque côté, le point au milieu (bit 4)
+            for (int w = 0; w < 512; w++) {
+                uint8_t color = hiresColor[hi][odd][(w >> 3) & 7];
+                if (!hiresFringes) {
+                    #define ON(n) ((w >> (4 + (n))) & 1)
+                    bool lit = ON(0), left = ON(-1), right = ON(1);
+                    if (lit && !left && !right) {
+                        // Point seul dans sa colonne : en couleur s'il est dans une
+                        // suite de trois points alternés
+                        bool run = (ON(-2) && !ON(-3) && ON(-4)) || (ON(-2) && ON(2)) || (ON(2) && !ON(3) && ON(4));
+                        if (!run) color = WHITE;
+                    } else if (!lit && left && right) {
+                        // Creux entre deux points : rempli si la suite continue d'un côté
+                        bool run = (!ON(-2) && ON(-3)) || (!ON(2) && ON(3));
+                        if (!run) color = BLACK;
+                    }
+                    #undef ON
+                }
+                hiresPix[hi][odd][w] = pix[color];
+            }
+}
+
+void setHiresFringes(bool on) {
+    hiresFringes = on;
+    buildPixelTables();
+    videoInvalidate();
 }
 
 void setPixelMap(const uint8_t* map) {
@@ -223,15 +256,15 @@ A2_FAST static void renderDoubleLores(const uint8_t* aux, const uint8_t* mainp, 
 A2_FAST static void renderHires(const uint8_t* src, uint8_t* out) {
     const uint8_t black = pix[BLACK], white = pix[WHITE];
     const bool mono = monochrome;
-    uint32_t prevBit = 0;
+    uint32_t prevBits = 0;         // les quatre derniers points de l'octet précédent
     uint8_t last = black;          // dernier point écrit
     uint8_t* px = out;
     int odd = 0;                   // parité de la colonne du premier point de l'octet
     for (int col = 0; col < 40; col++) {
         uint8_t b = src[col];
-        uint32_t next = (col < 39) ? (src[col + 1] & 1) : 0;
-        // bit 0 : dernier point de l'octet précédent ; bits 1 à 7 : les 7 points ; bit 8 : le suivant
-        uint32_t bits = prevBit | ((uint32_t)(b & 0x7F) << 1) | (next << 8);
+        uint32_t next = (col < 39) ? (src[col + 1] & 15) : 0;
+        // bits 0 à 3 : fin de l'octet précédent ; bits 4 à 10 : les 7 points ; bits 11 à 14 : les suivants
+        uint32_t bits = prevBits | ((uint32_t)(b & 0x7F) << 4) | (next << 11);
         int hi = b >> 7;
         // Octet retardé d'un demi-point : le point précédent se prolonge, et
         // le dernier point déborde d'un demi-point sur l'octet suivant
@@ -239,7 +272,7 @@ A2_FAST static void renderHires(const uint8_t* src, uint8_t* out) {
         if (hi) *p++ = last;
         if (mono) {
             for (int i = 0; i < 7; i++) {
-                last = ((bits >> (i + 1)) & 1) ? white : black;
+                last = ((bits >> (i + 4)) & 1) ? white : black;
                 p[0] = p[1] = last;
                 p += 2;
             }
@@ -247,16 +280,16 @@ A2_FAST static void renderHires(const uint8_t* src, uint8_t* out) {
             const uint8_t* even = hiresPix[hi][odd];
             const uint8_t* oddc = hiresPix[hi][odd ^ 1];
             uint8_t c;
-            c = even[bits & 7];        p[0] = p[1] = c;
-            c = oddc[(bits >> 1) & 7]; p[2] = p[3] = c;
-            c = even[(bits >> 2) & 7]; p[4] = p[5] = c;
-            c = oddc[(bits >> 3) & 7]; p[6] = p[7] = c;
-            c = even[(bits >> 4) & 7]; p[8] = p[9] = c;
-            c = oddc[(bits >> 5) & 7]; p[10] = p[11] = c;
-            c = even[(bits >> 6) & 7]; p[12] = p[13] = c;
+            c = even[bits & 511];        p[0] = p[1] = c;
+            c = oddc[(bits >> 1) & 511]; p[2] = p[3] = c;
+            c = even[(bits >> 2) & 511]; p[4] = p[5] = c;
+            c = oddc[(bits >> 3) & 511]; p[6] = p[7] = c;
+            c = even[(bits >> 4) & 511]; p[8] = p[9] = c;
+            c = oddc[(bits >> 5) & 511]; p[10] = p[11] = c;
+            c = even[(bits >> 6) & 511]; p[12] = p[13] = c;
             last = c;
         }
-        prevBit = (b >> 6) & 1;
+        prevBits = (b >> 3) & 15;
         px += 14;
         odd ^= 1;                  // 7 points par octet : la parité alterne
     }

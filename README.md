@@ -100,9 +100,13 @@ les mêmes fichiers du cœur d'émulation (`src/core/`) :
   tard, une image identique au pixel près, y compris sur une machine démarrée
   dans un autre modèle ; le lecteur de musique Mockingboard reprend au même
   instant de son morceau ;
-- images `.woz`, avec le lecteur au bit près : sur 17 disquettes d'origine de
-  la collection d'apple2ts, une seule reste bloquée à son démarrage
-  (Wasteland) ; Frogger et « Paul Whitehead Teaches Chess » relus en image.
+- images `.woz`, avec le lecteur au bit près et le vrai séquenceur de la
+  carte : dix disquettes d'origine de la collection d'apple2ts relues en
+  image, toutes arrivent à leur écran d'accueil (Algernon, Frogger, King's
+  Quest, Miner 2049er, Olympic Decathlon, « Paul Whitehead Teaches Chess »,
+  Sammy Lightfoot, Wasteland, Wings of Fury ; Balance of Power démarre
+  ProDOS puis réclame son disque système). Wasteland démarre aussi sur la
+  carte.
   Les disquettes du dossier `FilesDSK/Apple2/FormatWOZ` démarrent : Commando,
   Flight Simulator II, Frogger II, Karateka (faces A et B, et sa copie
   déplombée), Pitfall II, Platoon, Rambo, Rampage, Renegade, RoboCop (faces A ;
@@ -219,6 +223,15 @@ l'anglais.
   chaque image, dans `A2GAMES.CFG` sur la carte SD, et entrent en vigueur au
   démarrage de l'Apple. Un jeu sans réglages propres suit les réglages
   généraux.
+- **Franges de couleur** (réglages vidéo, non par défaut) : en haute
+  résolution, un point isolé prend une couleur, sur un vrai Apple comme ici.
+  Un tube cathodique fond ces points dans le blanc ; un écran VGA les montre
+  un par un, et le texte dessiné en haute résolution (l'introduction de
+  Karateka) se couvre de points rouges et bleus. Sur « non », la couleur est
+  réservée aux aplats (au moins trois points allumés un sur deux) et le
+  texte reste blanc ; en contrepartie un trait vertical d'un seul point de
+  large, coloré sur un vrai Apple, devient blanc. « Oui » rend le
+  comportement d'origine.
 - **Double haute résolution** (réglages vidéo) : couleur ou monochrome, sans
   changer le reste de l'affichage.
 - **Caractères** (réglages vidéo) : américains ou français, sur //e et //c.
@@ -387,10 +400,17 @@ Choix d'émulation à connaître :
   écriture ; seuls les secteurs qui ont changé sont écrits.
 - **Images `.woz`** : un autre lecteur, au bit près. Le disque tourne avec le
   temps du 6502 (un bit toutes les 4 cycles, ou la durée propre à l'image),
-  qu'on le lise ou non, et le registre de la carte se remplit bit par bit ;
-  quarts de piste, bits faibles et position angulaire au changement de piste
-  sont respectés. Un léger glissement à chaque tour évite qu'une boucle de
-  lecture calée sur la durée d'un tour retombe indéfiniment au même endroit.
+  qu'on le lise ou non ; quarts de piste, bits faibles et position angulaire
+  au changement de piste sont respectés. Les bits sont remis au vrai
+  séquenceur de la carte Disk II : la machine à états de sa PROM P6
+  (341-0028), exécutée à 2 MHz comme dans MAME et pom2. Le lecteur tourne
+  0,3 % plus vite que le nominal, comme aucun vrai lecteur n'est exactement à
+  300 tours par minute : sans cet écart, le disque et le 6502 restent en
+  phase au cycle près, et un chargeur qui échoue sur un calage puis
+  recommence (celui de Wasteland) retombe indéfiniment sur le même.
+- **Lecteur vide** : il rend du bruit, comme l'amplificateur de lecture d'un
+  vrai lecteur. Un registre figé bloquerait la boucle d'attente d'un
+  programme qui s'adresse au lecteur 2 sans disquette.
 - **Mémoire** : la RAM principale est en mémoire interne, la RAM auxiliaire du
   //e et les images de disquette en PSRAM. L'image du disque dur reste sur la
   carte SD, lue bloc par bloc.
@@ -413,6 +433,7 @@ GPL v3, comme les projets dont le code est issu :
 - [ESP32Lib](https://github.com/bitluni/ESP32Lib) (bitluni) — sortie VGA ;
 - [FabGL](https://github.com/fdivitto/FabGL) (Fabrizio Di Vittorio) — clavier PS/2 ;
 - [apple2ts](https://github.com/ct6502/apple2ts) (Chris Torrence) — tables du moteur pas à pas du Disk II ;
+- [pom2](https://github.com/habib256/pom2) (habib256) et [MAME](https://github.com/mamedev/mame) — séquenceur du Disk II piloté par sa PROM P6, bruit d'un lecteur vide, références pour l'IWM, le lecteur 3,5 pouces et le circuit MIG du //c Plus ;
 - [AppleWin](https://github.com/AppleWin/AppleWin), [LinApple](https://github.com/linappleii/linapple), [izapple2](https://github.com/ivanizag/izapple2) — références de comportement ;
 - [tests 6502](https://github.com/Klaus2m5/6502_65C02_functional_tests) de Klaus Dormann ;
 - [pt3_player](http://www.deater.net/weave/vmwprod/pt3_player/) de Vince Weaver, qui a servi à essayer la Mockingboard.

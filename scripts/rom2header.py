@@ -10,6 +10,7 @@ Génère Apple2_ProjectESP32/include/roms_apple2.h :
   - gb_rom_apple2c       Apple //c (ROM 255), 16 Ko, $C000-$FFFF
   - gb_rom_apple2c0, c3, c4, cp   Apple //c ROM 0, 3, 4 et //c Plus, 32 Ko en deux moitiés
   - gb_rom_disk2         carte Disk II 16 secteurs (P5), 256 octets, $Cn00
+  - gb_rom_disk2_p6      carte Disk II, PROM P6 du séquenceur (lecture des images WOZ)
   - gb_rom_mouse         carte souris AppleMouse II, 2 Ko
   - gb_rom_video2e       générateur de caractères du //e, 2 Ko
   - gb_rom_video2e_enh   générateur de caractères du //e Enhanced (MouseText), 2 Ko
@@ -43,6 +44,7 @@ ROMS = [
     ("gb_rom_apple2c4", ["apple2c/apple2c4/3410445b.256"], 0x8000, "Apple //c, ROM 4"),
     ("gb_rom_apple2cp", ["apple2c/apple2cp/341-0625-a.256"], 0x8000, "Apple //c Plus (ROM 5)"),
     ("gb_rom_disk2", ["341-0027-a.p5"], 0x100, "Carte Disk II 16 secteurs (PROM P5 341-0027)"),
+    ("gb_rom_disk2_p6", ["341-0028-a.rom"], 0x100, "Carte Disk II : séquenceur (PROM P6 341-0028)"),
     ("gb_rom_mouse", ["341-0270-c.4b"], 0x800, "Carte souris AppleMouse II (341-0270-C), 8 pages de 256 octets"),
     ("gb_rom_video2e", ["Apple IIe Video ROM - 342-0133-A - US 1982.bin"], 0x1000,
      "Générateur de caractères //e (US)"),

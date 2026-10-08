@@ -144,7 +144,7 @@ enum { MEDIA_DRIVE1 = 0, MEDIA_DRIVE2, MEDIA_HDD, MEDIA_EJECT1, MEDIA_EJECT2, ME
        MEDIA_BACK, MEDIA_COUNT };
 enum { MAC_MODEL = 0, MAC_APPLY, MAC_KEYB, MAC_FASTDISK, MAC_INFO, MAC_PERGAME, MAC_MOUSE, MAC_COLDBOOT, MAC_RESTART, MAC_BACK, MAC_COUNT };
 enum { JOY_MODE = 0, JOY_BACK, JOY_COUNT };
-enum { VID_MONITOR = 0, VID_DHGR, VID_CHARSET, VID_SCANLINES, VID_BACK, VID_COUNT };
+enum { VID_MONITOR = 0, VID_FRINGES, VID_DHGR, VID_CHARSET, VID_SCANLINES, VID_BACK, VID_COUNT };
 enum { AUD_VOLUME = 0, AUD_MOCKINGBOARD, AUD_BACK, AUD_COUNT };
 
 static int itemCount(int m) {
@@ -259,6 +259,9 @@ static string itemText(int m, int i) {
                 case VID_MONITOR:
                     snprintf(buf, sizeof(buf), T("Moniteur : %s", "Monitor: %s"), monitorName(Config::monitor));
                     return buf;
+                case VID_FRINGES:
+                    snprintf(buf, sizeof(buf), T("Franges de couleur : %s", "Colour fringes: %s"), yesNo(Config::fringes));
+                    return buf;
                 case VID_DHGR:
                     snprintf(buf, sizeof(buf), T("Double haute res. : %s", "Double hi-res: %s"),
                              Config::dhgrMono ? T("monochrome", "monochrome") : T("couleur", "colour"));
@@ -336,6 +339,9 @@ static void itemHelp(int m, int i, const char*& a, const char*& b) {
             if (i == VID_MONITOR) {
                 a = T("Blanc, vert, ambre : sans couleurs,", "White, green, amber: no colours,");
                 b = T("plus net en texte et en 80 colonnes.", "sharper for text and 80 columns.");
+            } else if (i == VID_FRINGES) {
+                a = T("Oui : points isoles en couleur, comme", "Yes: lone dots are coloured, as on a");
+                b = T("un vrai ecran. Non : texte plus net.", "real monitor. No: cleaner text.");
             } else if (i == VID_DHGR) {
                 a = T("Monochrome : texte fin lisible dans les", "Monochrome: fine text is readable in");
                 b = T("programmes de bureau (A2DeskTop).", "desktop programs (A2DeskTop).");
@@ -764,6 +770,11 @@ static void activate(int m, int i, int dir) {
             switch (i) {
                 case VID_MONITOR:
                     Config::monitor = (uint8_t)((Config::monitor + MONITOR_COUNT + step) % MONITOR_COUNT);
+                    Config::dirty = true;
+                    Video::setMonitor(Config::monitor);
+                    break;
+                case VID_FRINGES:
+                    Config::fringes = !Config::fringes;
                     Config::dirty = true;
                     Video::setMonitor(Config::monitor);
                     break;

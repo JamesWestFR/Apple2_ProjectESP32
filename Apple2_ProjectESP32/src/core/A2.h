@@ -159,6 +159,8 @@ extern bool monochrome;                  // rendu sans couleurs d'artefact (moni
 // Jeu de caractères du //e et du //c : 0 américain, 1 français (à, é, è, ç, ù... à la
 // place de @ { } \\ | etc.)
 void setCharset(uint8_t charset);
+extern bool hiresFringes;                // haute résolution : un point tout à fait isolé garde sa couleur (sinon blanc)
+void setHiresFringes(bool on);
 extern bool dhiresMono;                  // double haute résolution toujours sans couleurs (texte fin lisible)
 // Rend la ligne si ce qu'elle montre a changé depuis son dernier rendu ; rend
 // faux, sans toucher à `out`, si elle est restée la même

@@ -25,6 +25,7 @@ the Free Software Foundation, either version 3 of the License, or
 #include <stdlib.h>
 #include <string.h>
 #include "A2Internal.h"
+#include "roms_apple2.h"
 
 namespace A2 {
 namespace Disk {
@@ -266,19 +267,37 @@ static bool decodeSector(const uint8_t* nib, int pos, uint8_t* dst) {
 }
 
 // Image WOZ : la piste est un flux de bits tel que la tête le lit, gardé tel
-// quel. Le disque tourne avec le temps du 6502, un bit toutes les 4 cycles,
-// qu'on le lise ou non : les protections qui comptent les octets de
-// synchronisation, mesurent la longueur d'une piste ou attendent un passage
-// précis se comportent comme sur un vrai lecteur. Les quarts de piste de
-// l'image sont respectés.
+// quel. Le disque tourne avec le temps du 6502, qu'on le lise ou non : les
+// protections qui comptent les octets de synchronisation, mesurent la longueur
+// d'une piste ou attendent un passage précis se comportent comme sur un vrai
+// lecteur. Les quarts de piste de l'image sont respectés.
+//
+// Les bits sont remis au vrai séquenceur de la carte : la machine à états de
+// la PROM P6 (341-0028), exécutée à 2 MHz, deux pas par cycle de 6502, comme
+// le font MAME et pom2. Chaque bit à 1 est une impulsion au milieu de sa
+// cellule ; la PROM décide à chaque pas de décaler, d'effacer ou de garder le
+// registre de données. La durée de présentation d'un octet, sa remise à zéro
+// et la lecture de la protection en écriture (Q6) sont donc celles du matériel.
 static uint32_t wozBits = 0;            // longueur de la piste, en bits
-static uint32_t wozPos = 0;             // position de la tête, en bits
+static uint32_t wozPos = 0;             // bit qui suivra celui sous la tête
 static uint32_t wozCycles = 0;          // instant de la position
-static uint32_t wozRemainder = 0;       // temps pas encore converti en bits, en huitièmes de cycle
-static uint8_t wozTiming = 32;          // durée d'un bit, en huitièmes de cycle (32 : 4 cycles)
-static uint8_t wozTurns = 0;            // tours complets depuis le dernier changement de piste
-static uint8_t wozRegister = 0;         // registre de données de la carte
-static bool wozHold = false;            // un octet complet attend d'être lu
+static uint32_t wozPhase = 0;           // temps passé dans le bit sous la tête (unités de WOZ_TICK)
+static uint8_t wozBit = 0;              // bit sous la tête, bruit compris
+static bool wozPulsed = false;          // ce bit a déjà donné son impulsion
+static uint8_t wozTiming = 32;          // durée d'un bit, en pas de 125 ns (32 : 4 microsecondes)
+static uint8_t lssAddress = 0x10;       // état du séquenceur : adresse présentée à la PROM
+static uint8_t lssData = 0;             // registre de données de la carte
+// Un pas du séquenceur dure un demi-cycle de 6502. Les durées d'une image WOZ
+// sont comptées comme sur les disquettes écrites par un Apple : un bit de
+// « 4 microsecondes » (32 pas de 125 ns) y vaut 4 cycles, donc un demi-cycle
+// vaut 4 pas, ici en 16.16. Le lecteur tourne 0,3 % plus vite que ce nominal :
+// aucun vrai lecteur n'est exactement à 300 tours par minute, et sans cet
+// écart le disque et le 6502 restent en phase au cycle près. Une boucle de
+// lecture trop juste, qui échoue sur un calage et recommence (le chargeur de
+// Wasteland), retomberait alors indéfiniment sur le même.
+#define WOZ_TICK 262930u
+// Après une longue absence de lecture, seuls les derniers pas comptent pour le registre
+#define WOZ_MAX_TICKS 800u
 static uint8_t wozWindow = 0;           // 4 derniers bits lus (bits faibles)
 static uint32_t wozRandom = 0x2A2A2A2A;
 
@@ -293,7 +312,6 @@ static void loadWozTrack(int drive, int quarter) {
     uint32_t oldBits = wozBits;
     // Piste absente de l'image : du bruit
     wozBits = 0;
-    wozTurns = 0;
     // WOZ2 : durée d'un bit propre à la disquette
     uint8_t timing = 32;
     if (d.dataOffset == 2 && A2_platformDiskRead(drive, 59, &timing, 1) && timing >= 24 && timing <= 40) wozTiming = timing;
@@ -323,52 +341,81 @@ static void loadWozTrack(int drive, int quarter) {
     if (wozBits) wozPos = oldBits ? (uint32_t)((uint64_t)wozPos * wozBits / oldBits) % wozBits : wozPos % wozBits;
 }
 
-// Fait tourner le disque jusqu'à l'instant présent et rend le registre de données
-static uint8_t wozRead() {
+// Bit suivant sous la tête
+static inline void wozNextBit() {
+    uint32_t bit;
+    if (wozBits) {
+        bit = (trackBuf[wozPos >> 3] >> (7 - (wozPos & 7))) & 1;
+        if (++wozPos >= wozBits) wozPos = 0;
+        // Plus de trois zéros de suite : l'amplificateur de lecture rend du bruit
+        wozWindow = (uint8_t)(((wozWindow << 1) | bit) & 0x0F);
+        if (wozWindow == 0) bit = wozRandomBit();
+    } else {
+        bit = wozRandomBit();
+    }
+    wozBit = (uint8_t)bit;
+}
+
+// Fait tourner le disque et le séquenceur jusqu'à l'instant présent, et rend
+// le registre de données
+A2_FAST static uint8_t wozRead() {
     uint32_t elapsed = cycles - wozCycles;
     wozCycles = cycles;
     // Un moteur resté longtemps sans lecture : le nombre de tours faits importe peu
     if (elapsed > 4000000) elapsed = 4000000;
-    uint32_t total = wozRemainder + elapsed * 8;
-    uint32_t count = total / wozTiming;
-    wozRemainder = total % wozTiming;
-    // Longtemps sans lecture : seuls les derniers bits comptent pour le registre
-    if (count > 96) {
-        if (wozBits) wozPos = (wozPos + (count - 96)) % wozBits;
-        count = 96;
-    }
-    while (count--) {
-        uint32_t bit;
-        if (wozBits) {
-            bit = (trackBuf[wozPos >> 3] >> (7 - (wozPos & 7))) & 1;
-            if (++wozPos >= wozBits) {
-                wozPos = 0;
-                // Un vrai lecteur ne tourne jamais exactement à la même vitesse : sans
-                // ce léger glissement, une boucle de lecture calée sur la durée d'un
-                // tour retomberait indéfiniment au même endroit
-                if (++wozTurns >= 9) {
-                    wozTurns = 0;
-                    wozPos = 4;
-                }
-            }
-            // Plus de trois zéros de suite : l'amplificateur de lecture rend du bruit
-            wozWindow = (uint8_t)(((wozWindow << 1) | bit) & 0x0F);
-            if (wozWindow == 0) bit = wozRandomBit();
-        } else {
-            bit = wozRandomBit();
+    uint32_t ticks = elapsed * 2;
+    const uint32_t cell = (uint32_t)wozTiming << 16, half = cell >> 1;
+    if (ticks > WOZ_MAX_TICKS) {
+        uint64_t t = (uint64_t)(ticks - WOZ_MAX_TICKS) * WOZ_TICK + wozPhase;
+        uint32_t skipped = (uint32_t)(t / cell);
+        wozPhase = (uint32_t)(t % cell);
+        if (skipped) {
+            if (wozBits) wozPos = (wozPos + skipped - 1) % wozBits;
+            wozNextBit();
+            wozPulsed = wozPhase >= half;
         }
-        // Séquenceur de la carte : les bits entrent par la droite ; un octet est
-        // complet quand son bit 7 vaut 1, et reste présenté jusqu'au 1 suivant
-        if (wozHold) {
-            wozHold = !bit;
-        } else if (wozRegister & 0x80) {
-            wozRegister = (uint8_t)(0x02 | bit);
-        } else {
-            wozRegister = (uint8_t)((wozRegister << 1) | bit);
-            if (wozRegister & 0x80) wozHold = true;
-        }
+        ticks = WOZ_MAX_TICKS;
     }
-    return wozRegister;
+    uint32_t phase = wozPhase;
+    uint8_t address = lssAddress, data = lssData;
+    bool pulsed = wozPulsed;
+    const uint8_t protect = drives[cur].writeProtected ? 0x80 : 0x00;
+    while (ticks--) {
+        phase += WOZ_TICK;
+        address |= 0x10;
+        if (!pulsed && phase >= half) {
+            // Milieu de la cellule : l'impulsion d'un bit à 1, pendant un pas
+            pulsed = true;
+            if (wozBit) address &= ~0x10;
+        }
+        if (phase >= cell) {
+            phase -= cell;
+            pulsed = false;
+            wozNextBit();
+        }
+        uint8_t op = gb_rom_disk2_p6[address];
+        address = (uint8_t)((address & 0x1E) | (op & 0xC0) | ((op & 0x20) >> 5) | ((op & 0x10) << 1));
+        switch (op & 0x0F) {
+            case 0x8: case 0xC: break;
+            case 0x9: data = (uint8_t)(data << 1); break;
+            case 0xA: case 0xE: data = (uint8_t)((data >> 1) | protect); break;
+            case 0xB: case 0xF: data = latch; break;
+            case 0xD: data = (uint8_t)((data << 1) | 1); break;
+            default: data = 0; break;
+        }
+        // QA : le bit 7 du registre revient à la PROM
+        if (data & 0x80) address |= 0x02; else address &= ~0x02;
+    }
+    wozPhase = phase;
+    wozPulsed = pulsed;
+    lssAddress = address;
+    lssData = data;
+    return data;
+}
+
+// Q6 et Q7 viennent de changer : la PROM les reçoit sur son adresse
+static inline void wozSwitches() {
+    lssAddress = (uint8_t)((lssAddress & ~0x0C) | (q6 ? 0x04 : 0) | (q7 ? 0x08 : 0));
 }
 
 static void loadTrack(int drive, int track) {
@@ -660,16 +707,35 @@ uint8_t access(uint8_t reg, bool isWrite, uint8_t value) {
             cur = reg & 1;
             break;
         case 0xC:
-            q6 = false;
-            if (!spinning() || drives[cur].fmt == FMT_NONE) break;
-            ensureTrack();
-            if (trackLen == 0) break;
-            activity[cur] = 30;
-            if (drives[cur].fmt == FMT_WOZ) {
-                // Lecture au bit près ; une image WOZ ne s'écrit pas
-                if (!q7) latch = wozRead();
+            if (!spinning()) { q6 = false; break; }
+            if (drives[cur].fmt == FMT_NONE) {
+                // Lecteur vide : l'amplificateur de lecture rend du bruit, et le
+                // registre continue de se remplir. Un registre figé, bit 7 à 0,
+                // bloquerait à jamais la boucle d'attente d'un programme qui
+                // s'adresse au lecteur 2 (constat repris de pom2).
+                q6 = false;
+                if (q7) break;
+                if ((uint32_t)(cycles - nibbleCycles) < NIBBLE_CYCLES) latch &= 0x7F;
+                else {
+                    nibbleCycles = cycles;
+                    wozRandom = wozRandom * 1664525u + 1013904223u;
+                    latch = (uint8_t)(0x80 | (wozRandom >> 24));
+                }
                 break;
             }
+            ensureTrack();
+            if (trackLen == 0) { q6 = false; break; }
+            activity[cur] = 30;
+            if (drives[cur].fmt == FMT_WOZ) {
+                // Lecture au bit près ; une image WOZ ne s'écrit pas. Le temps
+                // écoulé l'a été avec les bascules d'avant cet accès.
+                uint8_t v = wozRead();
+                q6 = false;
+                wozSwitches();
+                if (!q7) latch = v;
+                break;
+            }
+            q6 = false;
             if (!q7) {
                 uint32_t elapsed = cycles - nibbleCycles;
                 if (elapsed < NIBBLE_CYCLES) {
@@ -687,14 +753,10 @@ uint8_t access(uint8_t reg, bool isWrite, uint8_t value) {
             if (++trackPos >= trackLen) trackPos = 0;
             break;
         case 0xD:
+            if (drives[cur].fmt == FMT_WOZ && spinning()) wozRead();
             q6 = true;
             if (isWrite) latch = value;
-            // Passage en chargement : le registre de données repart de zéro
-            if (drives[cur].fmt == FMT_WOZ && !q7) {
-                wozRead();
-                wozRegister = 0;
-                wozHold = false;
-            }
+            wozSwitches();
             break;
         case 0xE:
             // Fin d'une écriture : le secteur part aussitôt dans l'image, sans
