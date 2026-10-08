@@ -295,7 +295,7 @@ void setEnabled(bool on) {
 }
 
 void move(int dx, int dy) {
-    if (model() == MODEL_IIC) { IIc::mouseMove(dx, dy); return; }
+    if (isIIc()) { IIc::mouseMove(dx, dy); return; }
     if (!enabled || (dx == 0 && dy == 0)) return;
     s.x += dx;
     s.y += dy;
@@ -304,7 +304,7 @@ void move(int dx, int dy) {
 }
 
 void setButton(int n, bool down) {
-    if (model() == MODEL_IIC) { if (n == 0) IIc::mouseButton(down); return; }
+    if (isIIc()) { if (n == 0) IIc::mouseButton(down); return; }
     if (!enabled || n < 0 || n > 1 || s.button[n] == down) return;
     s.button[n] = down;
     mouseEvent(false);

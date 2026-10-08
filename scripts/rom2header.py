@@ -36,6 +36,10 @@ ROMS = [
     ("gb_rom_apple2e_enh", ["Apple IIe Enhanced ROM Pages C0-FF - 342-0349-B - 1985.bin"],
      0x4000, "Apple //e Enhanced, $C000-$FFFF"),
     ("gb_rom_apple2c", ["apple2c/a2c.128"], 0x4000, "Apple //c, première ROM (version 255), $C000-$FFFF"),
+    # ROM de 32 Ko : deux moitiés de 16 Ko, échangées par $C028
+    ("gb_rom_apple2c0", ["apple2c/apple2c0/3420033a.256"], 0x8000, "Apple //c, ROM 0 (UniDisk 3.5)"),
+    ("gb_rom_apple2c3", ["apple2c/apple2c3/342-0445-a.256"], 0x8000, "Apple //c, ROM 3 (extension mémoire)"),
+    ("gb_rom_apple2c4", ["apple2c/apple2c4/3410445b.256"], 0x8000, "Apple //c, ROM 4"),
     ("gb_rom_disk2", ["341-0027-a.p5"], 0x100, "Carte Disk II 16 secteurs (PROM P5 341-0027)"),
     ("gb_rom_mouse", ["341-0270-c.4b"], 0x800, "Carte souris AppleMouse II (341-0270-C), 8 pages de 256 octets"),
     ("gb_rom_video2e", ["Apple IIe Video ROM - 342-0133-A - US 1982.bin"], 0x1000,

@@ -6,7 +6,7 @@ Compile les fichiers de Apple2_ProjectESP32/src/core tels quels, sans ESP32, et
 les pilote par une suite d'actions données sur la ligne de commande, exécutées
 dans l'ordre :
 
-  model=N          0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced, 4 : //c (démarrage à froid)
+  model=N          0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced, 4 : //c, 5 à 7 : //c ROM 0, 3, 4 (démarrage à froid)
   charset=N        jeu de caractères du //e et du //c : 0 américain, 1 français
   noaux            //e sans mémoire auxiliaire (à placer avant model=)
   disk1=FICHIER    insère une disquette (.dsk .do .po .nib .2mg) ; disk2= de même
@@ -312,6 +312,8 @@ int main(int argc, char** argv) {
     auto start = [&]() {
         if (!started) {
             A2::init(mainRam, useAux ? auxRam : nullptr);
+            static uint8_t expansion[0x100000];
+            A2::setExpansionRam(expansion, sizeof(expansion));
             started = true;
         }
     };

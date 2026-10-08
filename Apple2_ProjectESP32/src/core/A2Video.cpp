@@ -102,7 +102,7 @@ void setCharset(uint8_t c) {
 }
 
 void videoSetModel() {
-    bool enhanced = model() == MODEL_IIE_ENH || model() == MODEL_IIC;
+    bool enhanced = model() == MODEL_IIE_ENH || isIIc();
     if (charset == 1) charRom = enhanced ? gb_rom_video2e_enh_fr : gb_rom_video2e_fr;
     else charRom = enhanced ? gb_rom_video2e_enh : gb_rom_video2e;
     buildPixelTables();

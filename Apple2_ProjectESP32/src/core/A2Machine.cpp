@@ -34,6 +34,7 @@ static uint8_t* auxRam = nullptr;
 static Model curModel = MODEL_IIE_ENH;
 static bool iie = true;              // //e, //e Enhanced ou //c
 static bool iic = false;             // //c : pas de slots, tout $C100-$CFFF est sa ROM
+static const uint8_t* romBase = gb_rom_apple2e_enh;   // début de l'image de ROM du modèle
 static const uint8_t* rom = gb_rom_apple2e_enh;   // //e : $C000-$FFFF ; ][ et ][+ : $D000-$FFFF
 static uint8_t sink[256];                         // reçoit les écritures en ROM
 
@@ -59,12 +60,14 @@ uint8_t* ramMain() { return mainRam; }
 uint8_t* ramAux() { return auxRam; }
 
 const char* modelName(Model m) {
-    static const char* names[MODEL_COUNT] = { "Apple ][", "Apple ][+", "Apple //e", "Apple //e Enhanced", "Apple //c" };
+    static const char* names[MODEL_COUNT] = { "Apple ][", "Apple ][+", "Apple //e", "Apple //e Enhanced", "Apple //c",
+                                               "Apple //c ROM 0", "Apple //c ROM 3", "Apple //c ROM 4" };
     return m < MODEL_COUNT ? names[m] : "?";
 }
 
 Model model() { return curModel; }
 bool isIIe() { return iie; }
+bool isIIc() { return iic; }
 
 // ---------------------------------------------------------------------------
 // Tables de pages
@@ -122,6 +125,14 @@ static void pageSlots() {
 }
 
 void slotsChanged() { pageSlots(); }
+
+static void pageAll();
+
+// //c à ROM de 32 Ko : $C028 échange les deux moitiés, partout de $C100 à $FFFF
+void romBankChanged() {
+    rom = romBase + (IIc::romBank() ? 0x4000 : 0);
+    pageAll();
+}
 
 static void pageAll() {
     pageRange(0x02, 0xBF);
@@ -391,17 +402,22 @@ void init(uint8_t* main64k, uint8_t* aux64k) {
 
 void setModel(Model m) {
     curModel = m;
-    iie = (m == MODEL_IIE || m == MODEL_IIE_ENH || m == MODEL_IIC);
-    iic = (m == MODEL_IIC);
-    cpu.cmos = (m == MODEL_IIE_ENH || m == MODEL_IIC);
+    iic = (m >= MODEL_IIC);
+    iie = (m == MODEL_IIE || m == MODEL_IIE_ENH || iic);
+    cpu.cmos = (m == MODEL_IIE_ENH || iic);
+    IIc::setRomVersion(m >= MODEL_IIC0, m >= MODEL_IIC3);
     Disk::setIwm(iic);
     switch (m) {
         case MODEL_II:      rom = gb_rom_apple2; break;
         case MODEL_IIPLUS:  rom = gb_rom_apple2plus; break;
         case MODEL_IIE:     rom = gb_rom_apple2e; break;
         case MODEL_IIC:     rom = gb_rom_apple2c; break;
+        case MODEL_IIC0:    rom = gb_rom_apple2c0; break;
+        case MODEL_IIC3:    rom = gb_rom_apple2c3; break;
+        case MODEL_IIC4:    rom = gb_rom_apple2c4; break;
         default:            rom = gb_rom_apple2e_enh; break;
     }
+    romBase = rom;
     videoSetModel();
     powerOn();
 }
@@ -411,6 +427,7 @@ void reset() {
     // lecture ROM, écriture autorisée, banque 2
     sw = SW_TEXT | SW_LCBANK2 | SW_LCWRITE;
     IIc::reset();
+    rom = romBase;
     anyKeyDown = false;
     pageAll();
     Disk::reset();
@@ -461,7 +478,7 @@ void runFrame() {
 // Sauvegarde d'état
 // ---------------------------------------------------------------------------
 
-static const char stateMagic[4] = { 'A', '2', 'S', '3' };
+static const char stateMagic[4] = { 'A', '2', 'S', '4' };
 
 static void machineState(StateIO& io) {
     cpuState(io);
@@ -499,6 +516,7 @@ bool loadState(bool (*read)(void* ctx, void* data, uint32_t len), void* ctx) {
         powerOn();
         return false;
     }
+    rom = romBase + (iic && IIc::romBank() ? 0x4000 : 0);
     pageAll();
     videoInvalidate();
     spkFrameLevel = spkLevel;

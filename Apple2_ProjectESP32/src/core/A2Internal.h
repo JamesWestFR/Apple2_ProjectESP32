@@ -20,6 +20,7 @@ uint8_t* ramMain();
 uint8_t* ramAux();
 void videoSetModel();
 int videoLineCycle();      // position du balayage dans la ligne, en cycles (0 à 64)
+void romBankChanged();     // //c : l'autre moitié de la ROM vient d'être choisie
 void slotsChanged();       // une carte est apparue ou a disparu : refait les pages $C100-$CEFF
 void cpuState(StateIO& io);
 
@@ -42,6 +43,8 @@ void scanlineTick();
 void vbl();
 void mouseMove(int dx, int dy);
 void mouseButton(bool down);
+bool romBank();                             // moitié haute de la ROM de 32 Ko en service
+void setRomVersion(bool banked, bool expansion);
 void state(StateIO& io);
 }
 namespace Mouse {

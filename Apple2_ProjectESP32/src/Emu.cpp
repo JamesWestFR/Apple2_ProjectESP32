@@ -139,6 +139,9 @@ void setup() {
     printf("| Apple2_ProjectESP32: SD %s\n", FileUtils::SDReady ? "mounted" : "NOT mounted");
 
     A2::init(mainRam, auxRam);
+    // Extension mémoire du //c (ROM 3 et 4) : 1 Mo de PSRAM
+    uint8_t* expansion = (uint8_t*)heap_caps_calloc(1, 0x100000, MALLOC_CAP_SPIRAM);
+    A2::setExpansionRam(expansion, expansion ? 0x100000 : 0);
     A2::setModel((A2::Model)Config::model);
     A2::Mockingboard::setEnabled(Config::mockingboard);
     A2::Mouse::setEnabled(Config::mouse);

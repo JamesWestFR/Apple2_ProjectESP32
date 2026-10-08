@@ -44,9 +44,28 @@ struct State {
     int16_t countX, countY;         // pas de souris qui restent à transmettre
     // ACIA 6551
     uint8_t command[2], control[2];
+    // ROM de 32 Ko : moitié en service
+    bool romHigh;
+    // Extension mémoire ($C0C0-$C0C3) : adresse sur 24 bits, qui avance à chaque accès à la donnée
+    uint32_t expAddress;
 };
 
 static State s;
+static bool bankedRom = false, hasExpansion = false;
+static uint8_t* expRam = nullptr;
+static uint32_t expMask = 0;
+
+bool romBank() { return s.romHigh; }
+
+void setRomVersion(bool banked, bool expansion) {
+    bankedRom = banked;
+    hasExpansion = expansion;
+}
+
+void setExpansion(uint8_t* ram, uint32_t size) {
+    expRam = ram;
+    expMask = size ? size - 1 : 0;
+}
 
 void reset() {
     int16_t cx = s.countX, cy = s.countY;
@@ -135,8 +154,38 @@ static inline int aciaIndex(uint8_t reg) {
     return (reg & 0xFC) == 0x98 ? 0 : ((reg & 0xFC) == 0xA8 ? 1 : -1);
 }
 
+// Extension mémoire : les trois octets de l'adresse (le quartet haut du
+// troisième est toujours à 1 sur une carte de 1 Mo au plus), puis la donnée
+static int expansionAccess(uint8_t reg, bool isWrite, uint8_t value) {
+    if (!hasExpansion || !expRam || (reg & 0xF0) != 0xC0) return -1;
+    int r = reg & 3;
+    if (r == 3) {
+        uint32_t a = s.expAddress & 0xFFFFF;
+        int v = 0xFF;
+        if (a <= expMask) {
+            if (isWrite) expRam[a] = value;
+            v = expRam[a];
+        }
+        s.expAddress = (s.expAddress + 1) & 0xFFFFFF;
+        return v;
+    }
+    if (isWrite) {
+        int shift = r * 8;
+        s.expAddress = (s.expAddress & ~(0xFFu << shift)) | ((uint32_t)value << shift);
+        return 0;
+    }
+    return r == 2 ? (((s.expAddress >> 16) & 0xFF) | 0xF0) : ((s.expAddress >> (r * 8)) & 0xFF);
+}
+
 // Rend la valeur lue, ou -1 si l'adresse est celle d'un //e ordinaire
 int read(uint8_t reg, uint8_t keyBits) {
+    if (reg == 0x28 && bankedRom) {
+        s.romHigh = !s.romHigh;
+        romBankChanged();
+        return 0;
+    }
+    int e = expansionAccess(reg, false, 0);
+    if (e >= 0) return e;
     switch (reg) {
         case 0x15: setIrq(IRQ_IIC_MOUSE, false); return (s.xIrq ? 0x80 : 0) | keyBits;
         case 0x17: setIrq(IRQ_IIC_MOUSE, false); return (s.yIrq ? 0x80 : 0) | keyBits;
@@ -168,6 +217,12 @@ int read(uint8_t reg, uint8_t keyBits) {
 
 // Vrai si l'écriture est traitée ici
 bool write(uint8_t reg, uint8_t value) {
+    if (reg == 0x28 && bankedRom) {
+        s.romHigh = !s.romHigh;
+        romBankChanged();
+        return true;
+    }
+    if (expansionAccess(reg, true, value) >= 0) return true;
     int port = aciaIndex(reg);
     if (port >= 0) {
         switch (reg & 3) {
@@ -190,4 +245,7 @@ void state(StateIO& io) {
 }
 
 }
+
+void setExpansionRam(uint8_t* ram, uint32_t size) { IIc::setExpansion(ram, size); }
+
 }

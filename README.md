@@ -48,7 +48,9 @@ Vérifié sur la carte, par le port série :
   fin de l'écriture du secteur ;
 - réglages par jeu : DOS 3.3 mémorisé en ][+, Karateka sur les réglages
   généraux, retour à DOS 3.3 en ][+ ;
-- image `.woz` : Aztec démarre, au même point que sur PC ;
+- images `.woz` d'origine, lues depuis la carte SD : Commando, RoboCop, et
+  Flight Simulator II sur le //c en ROM 4 ;
+- disque dur `Silvern Castle` (1,5 Mo) : écran titre ;
 - Apple //c : démarrage sur DOS 3.3 depuis son lecteur intégré, `PRINT 6*7`,
   chargement de Karateka ; jeu de caractères français affiché ;
 - Apple //c, souris intégrée : MousePaint s'ouvre au clic et son pointeur suit
@@ -92,10 +94,15 @@ les mêmes fichiers du cœur d'émulation (`src/core/`) :
   tard, une image identique au pixel près, y compris sur une machine démarrée
   dans un autre modèle ; le lecteur de musique Mockingboard reprend au même
   instant de son morceau ;
-- images `.woz` : sur dix disquettes d'origine essayées, Aztec, Olympic
-  Decathlon et Sammy Lightfoot démarrent (relus en image), Puyo et MousePaint
-  chargent sans erreur ; Frogger, Wasteland, Glutton, King's Quest et Miner
-  2049er restent bloqués sur leur protection ;
+- images `.woz`, avec le lecteur au bit près : sur 17 disquettes d'origine de
+  la collection d'apple2ts, une seule reste bloquée à son démarrage
+  (Wasteland) ; Frogger et « Paul Whitehead Teaches Chess » relus en image.
+  Les disquettes du dossier `FilesDSK/Apple2/FormatWOZ` démarrent : Commando,
+  Flight Simulator II, Frogger II, Karateka (faces A et B, et sa copie
+  déplombée), Pitfall II, Platoon, Rambo, Rampage, Renegade, RoboCop (faces A ;
+  les faces B ne sont pas des disquettes de démarrage) ;
+- Apple //c en ROM 0, 3 et 4 : DOS 3.3, ProDOS ; l'extension mémoire apparaît
+  sous ProDOS (`/RAM4`) en ROM 4 ; Karateka et MousePaint en ROM 4 ;
 - Apple //c : bandeau « Apple //c », DOS 3.3 (`SAVE` puis `RUN`), ProDOS,
   80 colonnes, Karateka jusqu'au jeu, Pandemonium, Aztec en `.woz` ;
 - jeu de caractères français : à, °, ç, §, é, ù, è, £ aux codes de @ [ \ ] { | } #,
@@ -113,7 +120,7 @@ résolution.
 
 | | |
 |---|---|
-| Modèles | Apple ][ (Integer BASIC), ][+ (Applesoft, Autostart), //e (6502), //e Enhanced (65C02, MouseText), //c (première ROM, dite 255) |
+| Modèles | Apple ][ (Integer BASIC), ][+ (Applesoft, Autostart), //e (6502), //e Enhanced (65C02, MouseText), //c en ROM 255, 0, 3 ou 4 (extension mémoire de 1 Mo en ROM 3 et 4) |
 | Caractères | américains, ou français sur //e, //e Enhanced et //c |
 | Mémoire | 64 Ko dont la carte langage ; 128 Ko sur //e (mémoire auxiliaire en PSRAM) |
 | Vidéo | texte 40 et 80 colonnes, basse et haute résolution, doubles résolutions, mode mixte, clignotement ; couleur ou moniteur blanc, vert, ambre |
@@ -128,9 +135,9 @@ RAM, vidéo et son propres : hors de portée de cette carte). Les images de
 programmes sont faits pour le IIGS et ne tournent pas sur un //e. Ne sont pas
 émulés non plus : sur le //c, la réception sur les ports série et le port 2
 (modem), et, comme sur un vrai, aucune carte (ni disque dur ni Mockingboard) ;
-les ROM suivantes du //c et le //c Plus ; la cassette ; la carte série, la synthèse
-vocale de la Mockingboard ; les protections de disquette qui mesurent
-des durées (une partie des images `.woz`).
+le lecteur 3,5 pouces du //c (les ROM 0, 3 et 4 démarrent sur le lecteur
+5,25 pouces) et donc le //c Plus ; la cassette ; la carte série, la synthèse
+vocale de la Mockingboard ; l'écriture sur une image `.woz`.
 
 ## Utilisation
 
@@ -343,9 +350,13 @@ Choix d'émulation à connaître :
 - **Disquette** : un octet se présente tous les 32 cycles, comme sur un vrai
   lecteur, mais le disque attend le programme : un octet non lu n'est jamais
   perdu. Un secteur écrit est décodé et reporté dans l'image dès la fin de son
-  écriture ; seuls les secteurs qui ont changé sont écrits. Le flux de bits
-  d'une image `.woz` est converti en octets au chargement de la piste, quart de
-  piste par quart de piste.
+  écriture ; seuls les secteurs qui ont changé sont écrits.
+- **Images `.woz`** : un autre lecteur, au bit près. Le disque tourne avec le
+  temps du 6502 (un bit toutes les 4 cycles, ou la durée propre à l'image),
+  qu'on le lise ou non, et le registre de la carte se remplit bit par bit ;
+  quarts de piste, bits faibles et position angulaire au changement de piste
+  sont respectés. Un léger glissement à chaque tour évite qu'une boucle de
+  lecture calée sur la durée d'un tour retombe indéfiniment au même endroit.
 - **Mémoire** : la RAM principale est en mémoire interne, la RAM auxiliaire du
   //e et les images de disquette en PSRAM. L'image du disque dur reste sur la
   carte SD, lue bloc par bloc.

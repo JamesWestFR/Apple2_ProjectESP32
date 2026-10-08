@@ -14,9 +14,10 @@ scripts/a2console.py. Une commande par ligne :
   e1 / e2      éjecte ; eh : retire le disque dur (une grande image passée à d1 y est montée)
   b            redémarrage à froid de l'Apple
   r            Ctrl-Reset
-  m N          modèle (0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced, 4 : //c)
+  m N          modèle (0 : ][, 1 : ][+, 2 : //e, 3 : //e Enhanced, 4 : //c, 5 à 7 : //c ROM 0, 3, 4)
   cs 0|1       caractères américains ou français
   x            capture d'écran sur la carte SD
+  ls CHEMIN    contenu d'un dossier de la carte SD
   ss / sl      sauvegarde / reprise de l'état (Ctrl+F9 / Ctrl+F10)
   u            vitesse maximale, oui ou non
   mc 0|1       carte souris absente ou présente ; mm DX DY : déplacement ; mb 0|1 : bouton
@@ -38,6 +39,8 @@ the Free Software Foundation, either version 3 of the License, or
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -282,6 +285,23 @@ static void execute(char* cmd) {
     if (!strcmp(cmd, "put")) { receiveFile(arg); return; }
     if (!strcmp(cmd, "putbig")) { receiveBigFile(arg); return; }
     if (!strcmp(cmd, "mkfile")) { makeFile(arg); return; }
+    if (!strcmp(cmd, "ls")) {
+        // ls CHEMIN : contenu d'un dossier de la carte SD (la racine par défaut)
+        string dirPath = *arg ? arg : "/sd";
+        DIR* dir = opendir(dirPath.c_str());
+        if (!dir) { printf("A2 ls %s: FAILED\n", dirPath.c_str()); return; }
+        struct dirent* de;
+        while ((de = readdir(dir)) != nullptr) {
+            struct stat st;
+            string full = dirPath + "/" + de->d_name;
+            long size = (de->d_type != DT_DIR && stat(full.c_str(), &st) == 0) ? (long)st.st_size : -1;
+            if (size < 0) printf("A2 ls      <dir> %s\n", de->d_name);
+            else printf("A2 ls %10ld %s\n", size, de->d_name);
+        }
+        closedir(dir);
+        printf("A2 done ls\n");
+        return;
+    }
     if (!strcmp(cmd, "hddbench")) { hddBench(); return; }
     if (!strcmp(cmd, "rm")) { printf("A2 rm %s: %s\n", arg, remove(arg) == 0 ? "ok" : "FAILED"); return; }
 

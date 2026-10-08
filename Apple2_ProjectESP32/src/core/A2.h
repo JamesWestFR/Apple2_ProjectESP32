@@ -34,6 +34,9 @@ enum Model : uint8_t {
     MODEL_IIE,        // Apple //e : 6502, 128 Ko avec la carte 80 colonnes étendue
     MODEL_IIE_ENH,    // Apple //e Enhanced : 65C02, MouseText
     MODEL_IIC,        // Apple //c (ROM 255) : un //e Enhanced sans slots, lecteur intégré
+    MODEL_IIC0,       // Apple //c, ROM 0 : firmware du lecteur 3,5 pouces (lecteur non émulé)
+    MODEL_IIC3,       // Apple //c, ROM 3 : extension mémoire
+    MODEL_IIC4,       // Apple //c, ROM 4 : dernière version
     MODEL_COUNT
 };
 
@@ -122,6 +125,10 @@ void init(uint8_t* main64k, uint8_t* aux64k);
 void setModel(Model m);
 Model model();
 bool isIIe();
+bool isIIc();              // une des versions du //c
+// Mémoire de l'extension du //c (ROM 3 et 4), fournie par la plateforme : une
+// puissance de 2, 1 Mo au plus. Sans elle, l'extension est absente.
+void setExpansionRam(uint8_t* ram, uint32_t size);
 void powerOn();            // démarrage à froid : RAM effacée
 void reset();              // Ctrl-Reset
 void runFrame();           // une image : 262 lignes de 65 cycles

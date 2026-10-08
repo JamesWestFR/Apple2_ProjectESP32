@@ -309,7 +309,7 @@ static void itemHelp(int m, int i, const char*& a, const char*& b) {
         case M_MACHINE:
             if (i == MAC_MODEL || i == MAC_APPLY) {
                 a = T("][ : BASIC entier. ][+ : Applesoft.", "][: Integer BASIC. ][+: Applesoft.");
-                b = T("//e : 128 Ko, cartes. //c : sans slots.", "//e: 128K, cards. //c: no slots.");
+                b = T("//e : cartes. //c : ROM 255, 0, 3 ou 4.", "//e: cards. //c: ROM 255, 0, 3 or 4.");
             } else if (i == MAC_KEYB) {
                 a = T("La touche marquee A donne un A.", "The key labelled A types an A.");
             } else if (i == MAC_FASTDISK) {
@@ -485,6 +485,16 @@ static void drawList() {
         string text = " " + head(recent ? DiskImage::baseName(entry) : entry, COLS - 2);
         if (fileTop + i == fileSel) putRow(LIST_TOP + i, text.c_str(), true);
         else put(LIST_TOP + i, 0, text.c_str());
+    }
+    // Nom trop long pour sa ligne : sa suite, sous la liste (les faces A et B
+    // d'un jeu ne diffèrent souvent que par la fin du nom)
+    if (!entries.empty()) {
+        string name = recent ? DiskImage::baseName(entries[fileSel]) : entries[fileSel];
+        if (name.size() > COLS - 2) {
+            putRow(MESSAGE_ROW - 1, (" " + head(name.substr(COLS - 2), COLS - 2)).c_str(), false, COL_INFO);
+            if (name.size() > 2 * (COLS - 2))
+                putRow(MESSAGE_ROW, (" " + head(name.substr(2 * (COLS - 2)), COLS - 2)).c_str(), false, COL_INFO);
+        }
     }
     if (!message.empty()) putRow(MESSAGE_ROW, (" " + head(message, COLS - 2)).c_str(), false, COL_TITLE);
     show();
